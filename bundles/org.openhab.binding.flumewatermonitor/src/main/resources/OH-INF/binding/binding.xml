@@ -3,7 +3,8 @@
 	xmlns:binding="https://openhab.org/schemas/binding/v1.0.0"
 	xsi:schemaLocation="https://openhab.org/schemas/binding/v1.0.0 https://openhab.org/schemas/binding-1.0.0.xsd">
 
-	<name>FlumeWaterMonitor Binding</name>
-	<description>This is the binding for FlumeWaterMonitor.</description>
+	<name>Flume Water Monitor Binding</name>
+	<description>This is the binding for the Flume Whole-House Water Monitor.</description>
+	<author>Sara Geleskie Damiano</author>
 
 </binding:binding>

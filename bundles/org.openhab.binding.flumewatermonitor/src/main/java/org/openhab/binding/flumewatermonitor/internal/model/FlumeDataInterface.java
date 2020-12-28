@@ -10,17 +10,15 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.flumewatermonitor.internal;
+package org.openhab.binding.flumewatermonitor.internal.model;
+
+import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * The {@link FlumeWaterMonitorConfiguration} class contains fields mapping thing configuration parameters.
+ * The {@link FlumeDataInterface} represents the "data" returned by a data query.
  *
  * @author Sara Geleskie Damiano - Initial contribution
  */
-public class FlumeWaterMonitorConfiguration {
-
-    /**
-     * Sample configuration parameter. Replace with your own.
-     */
-    public String config1;
+@NonNullByDefault
+public interface FlumeDataInterface {
 }
