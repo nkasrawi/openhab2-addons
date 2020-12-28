@@ -150,8 +150,10 @@ public class FlumeResponseListener<T> extends BufferingResponseListener {
             future.complete(arrayOfDatas);
         } catch (AuthorizationException | NotFoundException | IOException | RuntimeException e) {
             logger.debug("Exception in Flume response listener: {}", e.getMessage());
-            if (e.getCause() != null) {
-                logger.debug("Inner Exception: {}", e.getCause().getMessage());
+            @Nullable
+            Throwable errorCause = e.getCause();
+            if (errorCause != null) {
+                logger.debug("Inner Exception: {}", errorCause.getMessage());
             }
             future.completeExceptionally(e);
         }
