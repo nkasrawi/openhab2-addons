@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,9 +16,16 @@ import static org.openhab.io.homekit.internal.HomekitAccessoryType.*;
 import static org.openhab.io.homekit.internal.HomekitCharacteristicType.*;
 
 import java.lang.reflect.InvocationTargetException;
-import java.util.*;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -124,7 +131,7 @@ public class HomekitAccessoryFactory {
 
     /**
      * creates HomeKit accessory for a openhab item.
-     * 
+     *
      * @param taggedItem openhab item tagged as HomeKit item
      * @param metadataRegistry openhab metadata registry required to get item meta information
      * @param updater OH HomeKit update class that ensure the status sync between OH item and corresponding HomeKit
@@ -171,7 +178,7 @@ public class HomekitAccessoryFactory {
 
     /**
      * return HomeKit accessory types for a OH item based on meta data
-     * 
+     *
      * @param item OH item
      * @param metadataRegistry meta data registry
      * @return list of HomeKit accessory types and characteristics.
@@ -210,7 +217,7 @@ public class HomekitAccessoryFactory {
 
     /**
      * return list of HomeKit relevant groups linked to an accessory
-     * 
+     *
      * @param item OH item
      * @param itemRegistry item registry
      * @param metadataRegistry metadata registry
@@ -218,7 +225,7 @@ public class HomekitAccessoryFactory {
      */
     public static List<GroupItem> getAccessoryGroups(Item item, ItemRegistry itemRegistry,
             MetadataRegistry metadataRegistry) {
-        return item.getGroupNames().stream().flatMap(name -> {
+        return (item instanceof GroupItem) ? Collections.emptyList() : item.getGroupNames().stream().flatMap(name -> {
             final @Nullable Item groupItem = itemRegistry.get(name);
             if ((groupItem instanceof GroupItem) && ((GroupItem) groupItem).getBaseItem() == null) {
                 return Stream.of((GroupItem) groupItem);
@@ -231,7 +238,7 @@ public class HomekitAccessoryFactory {
     /**
      * collect all mandatory characteristics for a given tagged item, e.g. collect all mandatory HomeKit items from a
      * GroupItem
-     * 
+     *
      * @param taggedItem HomeKit tagged item
      * @param metadataRegistry meta data registry
      * @return list of mandatory
@@ -272,8 +279,8 @@ public class HomekitAccessoryFactory {
             // no mandatory characteristics linked to accessory type of mainItem. we are done
             return;
         }
-        // check whether we adding characteristic to the main item, and if yes, use existing item proxy.
-        // if we adding no to the main item (typical for groups), create new proxy item.
+        // check whether we are adding characteristic to the main item, and if yes, use existing item proxy.
+        // if we are adding not to the main item (typical for groups), create new proxy item.
         final HomekitOHItemProxy itemProxy = mainItem.getItem().equals(item) ? mainItem.getProxyItem()
                 : new HomekitOHItemProxy(item);
         // an item can have several tags, e.g. "ActiveStatus, InUse". we iterate here over all his tags
@@ -293,7 +300,8 @@ public class HomekitAccessoryFactory {
                 final HomekitCharacteristicType characteristic = accessory.getValue();
 
                 // check whether it is a mandatory characteristic. optional will be added later by another method.
-                if (isMandatoryCharacteristic(mainItem.getAccessoryType(), characteristic)) {
+                if (belongsToType(mainItem.getAccessoryType(), accessory)
+                        && isMandatoryCharacteristic(mainItem.getAccessoryType(), characteristic)) {
                     characteristics.add(new HomekitTaggedItem(itemProxy, accessory.getKey(), characteristic,
                             mainItem.isGroup() ? (GroupItem) mainItem.getItem() : null,
                             HomekitAccessoryFactory.getItemConfiguration(item, metadataRegistry)));
@@ -341,7 +349,7 @@ public class HomekitAccessoryFactory {
 
     /**
      * collect optional HomeKit characteristics for a OH item.
-     * 
+     *
      * @param taggedItem main OH item
      * @param metadataRegistry OH metadata registry
      * @return a map with characteristics and corresponding OH items
@@ -352,7 +360,7 @@ public class HomekitAccessoryFactory {
         if (taggedItem.isGroup()) {
             GroupItem groupItem = (GroupItem) taggedItem.getItem();
             groupItem.getMembers().forEach(item -> getAccessoryTypes(item, metadataRegistry).stream()
-                    .filter(c -> !isRootAccessory(c))
+                    .filter(c -> !isRootAccessory(c)).filter(c -> belongsToType(taggedItem.getAccessoryType(), c))
                     .filter(c -> !isMandatoryCharacteristic(taggedItem.getAccessoryType(), c.getValue()))
                     .forEach(characteristic -> characteristicItems.put(characteristic.getValue(), (GenericItem) item)));
         } else {
@@ -368,7 +376,7 @@ public class HomekitAccessoryFactory {
 
     /**
      * return true is characteristic is a mandatory characteristic for the accessory.
-     * 
+     *
      * @param accessory accessory
      * @param characteristic characteristic
      * @return true if characteristic is mandatory, false if not mandatory
@@ -381,11 +389,24 @@ public class HomekitAccessoryFactory {
 
     /**
      * check whether accessory is root accessory, i.e. without characteristic tag.
-     * 
+     *
      * @param accessory accessory
      * @return true if accessory has not characteristic.
      */
     private static boolean isRootAccessory(Entry<HomekitAccessoryType, HomekitCharacteristicType> accessory) {
         return ((accessory.getValue() == null) || (accessory.getValue() == EMPTY));
+    }
+
+    /**
+     * check whether characteristic belongs to the specific accessory type.
+     * characteristic with no accessory type mentioned in metadata are considered as candidates for all types.
+     *
+     * @param accessoryType accessory type
+     * @param characteristic characteristic
+     * @return true if characteristic belongs to the accessory type.
+     */
+    private static boolean belongsToType(HomekitAccessoryType accessoryType,
+            Entry<HomekitAccessoryType, HomekitCharacteristicType> characteristic) {
+        return ((characteristic.getKey() == accessoryType) || (characteristic.getKey() == DUMMY));
     }
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,8 +18,6 @@ import static org.openhab.binding.yamahareceiver.internal.protocol.xml.XMLUtils.
 
 import java.io.IOException;
 
-import org.apache.commons.lang.ArrayUtils;
-import org.apache.commons.lang.StringUtils;
 import org.openhab.binding.yamahareceiver.internal.protocol.AbstractConnection;
 import org.openhab.binding.yamahareceiver.internal.protocol.InputWithPresetControl;
 import org.openhab.binding.yamahareceiver.internal.protocol.ReceivedMessageParseException;
@@ -49,6 +47,8 @@ import org.w3c.dom.Node;
  * @author Tomasz Maruszak - Compatibility fixes
  */
 public class InputWithPresetControlXML extends AbstractInputControlXML implements InputWithPresetControl {
+
+    private static final String PRESET_LETTERS = "ABCD";
 
     protected CommandTemplate preset = new CommandTemplate(
             "<Play_Control><Preset><Preset_Sel>%s</Preset_Sel></Preset></Play_Control>",
@@ -116,7 +116,7 @@ public class InputWithPresetControlXML extends AbstractInputControlXML implement
                 String value = getNodeContentOrDefault(itemNode, "Param", String.valueOf(i));
 
                 // For RX-V3900 when a preset slot is not used, this is how it looks
-                if (StringUtils.isEmpty(title) && "Not Used".equalsIgnoreCase(value)) {
+                if (title.isEmpty() && "Not Used".equalsIgnoreCase(value)) {
                     continue;
                 }
 
@@ -130,7 +130,7 @@ public class InputWithPresetControlXML extends AbstractInputControlXML implement
         String presetValue = getNodeContentOrEmpty(response, preset.getPath());
 
         // fall back to second method of obtaining current preset (works for Tuner on RX-V3900)
-        if (StringUtils.isEmpty(presetValue)) {
+        if (presetValue.isEmpty()) {
             try {
                 Node presetResponse = getResponse(con, wrInput(preset.apply(GET_PARAM)), inputElement);
                 presetValue = getNodeContentOrEmpty(presetResponse, preset.getPath());
@@ -146,16 +146,17 @@ public class InputWithPresetControlXML extends AbstractInputControlXML implement
     }
 
     private int convertToPresetNumber(String presetValue) {
-        if (StringUtils.isNotEmpty(presetValue)) {
-            if (StringUtils.isNumeric(presetValue)) {
+        if (!presetValue.isEmpty()) {
+            if (presetValue.chars().allMatch(Character::isDigit)) {
                 return Integer.parseInt(presetValue);
             } else {
                 // special handling for RX-V3900, where 'A1' becomes 101 and 'B2' becomes 202 preset
                 if (presetValue.length() >= 2) {
                     Character presetAlpha = presetValue.charAt(0);
-                    if (Character.isLetter(presetAlpha) && Character.isUpperCase(presetAlpha)) {
+                    if (Character.isLetter(presetAlpha) && Character.isUpperCase(presetAlpha)
+                            && Character.isDigit(presetValue.charAt(1))) {
                         int presetNumber = Integer.parseInt(presetValue.substring(1));
-                        return (ArrayUtils.indexOf(LETTERS, presetAlpha) + 1) * 100 + presetNumber;
+                        return (PRESET_LETTERS.indexOf(presetAlpha) + 1) * 100 + presetNumber;
                     }
                 }
             }
@@ -176,7 +177,7 @@ public class InputWithPresetControlXML extends AbstractInputControlXML implement
         // special handling for RX-V3900, where 'A1' becomes 101 and 'B2' becomes 202 preset
         if (presetChannel > 100) {
             int presetNumber = presetChannel % 100;
-            char presetAlpha = LETTERS[presetChannel / 100 - 1];
+            char presetAlpha = PRESET_LETTERS.charAt(presetChannel / 100 - 1);
             presetValue = Character.toString(presetAlpha) + presetNumber;
         } else {
             presetValue = Integer.toString(presetChannel);
@@ -186,6 +187,4 @@ public class InputWithPresetControlXML extends AbstractInputControlXML implement
         comReference.get().send(cmd);
         update();
     }
-
-    private static final Character[] LETTERS = new Character[] { 'A', 'B', 'C', 'D' };
 }

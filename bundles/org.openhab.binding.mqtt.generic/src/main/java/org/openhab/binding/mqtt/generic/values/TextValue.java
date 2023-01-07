@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,12 +12,13 @@
  */
 package org.openhab.binding.mqtt.generic.values;
 
-import java.util.Collections;
+import static java.util.function.Predicate.not;
+
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.apache.commons.lang.StringUtils;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.library.CoreItemFactory;
@@ -44,8 +45,8 @@ public class TextValue extends Value {
      *            will be allowed.
      */
     public TextValue(String[] states) {
-        super(CoreItemFactory.STRING, Collections.singletonList(StringType.class));
-        Set<String> s = Stream.of(states).filter(e -> StringUtils.isNotBlank(e)).collect(Collectors.toSet());
+        super(CoreItemFactory.STRING, List.of(StringType.class));
+        Set<String> s = Stream.of(states).filter(not(String::isBlank)).collect(Collectors.toSet());
         if (!s.isEmpty()) {
             this.states = s;
         } else {
@@ -54,7 +55,7 @@ public class TextValue extends Value {
     }
 
     public TextValue() {
-        super(CoreItemFactory.STRING, Collections.singletonList(StringType.class));
+        super(CoreItemFactory.STRING, List.of(StringType.class));
         this.states = null;
     }
 

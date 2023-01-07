@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,6 +15,7 @@ package org.openhab.binding.ecobee.internal.handler;
 import static org.openhab.binding.ecobee.internal.EcobeeBindingConstants.*;
 
 import java.lang.reflect.Field;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -24,9 +25,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import javax.measure.Unit;
 
-import org.apache.commons.lang.WordUtils;
+import org.apache.commons.lang3.text.WordUtils;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.binding.ecobee.internal.action.EcobeeActions;
 import org.openhab.binding.ecobee.internal.api.EcobeeApi;
 import org.openhab.binding.ecobee.internal.config.EcobeeThermostatConfiguration;
 import org.openhab.binding.ecobee.internal.dto.SelectionDTO;
@@ -65,6 +67,7 @@ import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.thing.binding.BaseBridgeHandler;
 import org.openhab.core.thing.binding.ThingHandler;
+import org.openhab.core.thing.binding.ThingHandlerService;
 import org.openhab.core.thing.type.ChannelType;
 import org.openhab.core.thing.type.ChannelTypeRegistry;
 import org.openhab.core.thing.type.ChannelTypeUID;
@@ -244,6 +247,11 @@ public class EcobeeThermostatBridgeHandler extends BaseBridgeHandler {
         return false;
     }
 
+    @Override
+    public Collection<Class<? extends ThingHandlerService>> getServices() {
+        return Collections.singletonList(EcobeeActions.class);
+    }
+
     public void updateChannels(ThermostatDTO thermostat) {
         logger.debug("ThermostatBridge: Updating channels for thermostat id {}", thermostat.identifier);
         savedThermostat = thermostat;
@@ -269,7 +277,7 @@ public class EcobeeThermostatBridgeHandler extends BaseBridgeHandler {
         String channelId = channelUID.getIdWithoutGroup();
         String groupId = channelUID.getGroupId();
         if (groupId == null) {
-            logger.info("Can't handle command because channel's groupId is null");
+            logger.info("Can't handle command '{}' because channel's groupId is null", command);
             return;
         }
         ThermostatDTO thermostat = new ThermostatDTO();
@@ -309,7 +317,7 @@ public class EcobeeThermostatBridgeHandler extends BaseBridgeHandler {
     }
 
     private void setField(Field field, Object object, Command command) {
-        logger.info("Setting field '{}.{}' to value '{}'", object.getClass().getSimpleName().toLowerCase(),
+        logger.debug("Setting field '{}.{}' to value '{}'", object.getClass().getSimpleName().toLowerCase(),
                 field.getName(), command);
         Class<?> fieldClass = field.getType();
         try {

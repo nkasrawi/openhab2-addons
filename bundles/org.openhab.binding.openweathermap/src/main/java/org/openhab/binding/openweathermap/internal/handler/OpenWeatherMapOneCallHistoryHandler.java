@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -10,13 +10,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-
 package org.openhab.binding.openweathermap.internal.handler;
 
 import static org.openhab.binding.openweathermap.internal.OpenWeatherMapBindingConstants.*;
-import static org.openhab.core.library.unit.MetricPrefix.HECTO;
-import static org.openhab.core.library.unit.MetricPrefix.KILO;
-import static org.openhab.core.library.unit.MetricPrefix.MILLI;
+import static org.openhab.core.library.unit.MetricPrefix.*;
 import static org.openhab.core.library.unit.SIUnits.*;
 import static org.openhab.core.library.unit.Units.*;
 
@@ -26,11 +23,12 @@ import java.util.regex.Pattern;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.openweathermap.internal.config.OpenWeatherMapOneCallHistoryConfiguration;
-import org.openhab.binding.openweathermap.internal.connection.OpenWeatherMapCommunicationException;
-import org.openhab.binding.openweathermap.internal.connection.OpenWeatherMapConfigurationException;
 import org.openhab.binding.openweathermap.internal.connection.OpenWeatherMapConnection;
-import org.openhab.binding.openweathermap.internal.dto.onecallhist.*;
-import org.openhab.binding.openweathermap.internal.dto.onecallhist.OpenWeatherMapOneCallHistAPIData;
+import org.openhab.binding.openweathermap.internal.dto.OpenWeatherMapOneCallHistAPIData;
+import org.openhab.binding.openweathermap.internal.dto.onecall.Precipitation;
+import org.openhab.binding.openweathermap.internal.dto.onecallhist.Hourly;
+import org.openhab.core.i18n.CommunicationException;
+import org.openhab.core.i18n.ConfigurationException;
 import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.thing.ChannelUID;
@@ -91,13 +89,13 @@ public class OpenWeatherMapOneCallHistoryHandler extends AbstractOpenWeatherMapH
 
     @Override
     protected boolean requestData(OpenWeatherMapConnection connection)
-            throws OpenWeatherMapCommunicationException, OpenWeatherMapConfigurationException {
+            throws CommunicationException, ConfigurationException {
         logger.debug("Update weather and forecast data of thing '{}'.", getThing().getUID());
         try {
             weatherData = connection.getOneCallHistAPIData(location, day);
             return true;
         } catch (JsonSyntaxException e) {
-            logger.debug("JsonSyntaxException occurred during execution: {}", e.getLocalizedMessage(), e);
+            logger.debug("JsonSyntaxException occurred during execution: {}", e.getMessage(), e);
             return false;
         }
     }
@@ -199,11 +197,11 @@ public class OpenWeatherMapOneCallHistoryHandler extends AbstractOpenWeatherMapH
                     state = getDecimalTypeState(localWeatherData.getCurrent().getUvi());
                     break;
                 case CHANNEL_RAIN:
-                    Rain rain = localWeatherData.getCurrent().getRain();
+                    Precipitation rain = localWeatherData.getCurrent().getRain();
                     state = getQuantityTypeState(rain == null ? 0 : rain.get1h(), MILLI(METRE));
                     break;
                 case CHANNEL_SNOW:
-                    Snow snow = localWeatherData.getCurrent().getSnow();
+                    Precipitation snow = localWeatherData.getCurrent().getSnow();
                     state = getQuantityTypeState(snow == null ? 0 : snow.get1h(), MILLI(METRE));
                     break;
                 case CHANNEL_VISIBILITY:
@@ -296,11 +294,11 @@ public class OpenWeatherMapOneCallHistoryHandler extends AbstractOpenWeatherMapH
                     State tempstate = new QuantityType<>(historyData.getVisibility(), METRE).toUnit(KILO(METRE));
                     state = (tempstate == null ? state : tempstate);
                 case CHANNEL_RAIN:
-                    Rain rain = historyData.getRain();
+                    Precipitation rain = historyData.getRain();
                     state = getQuantityTypeState(rain == null ? 0 : rain.get1h(), MILLI(METRE));
                     break;
                 case CHANNEL_SNOW:
-                    Snow snow = historyData.getSnow();
+                    Precipitation snow = historyData.getSnow();
                     state = getQuantityTypeState(snow == null ? 0 : snow.get1h(), MILLI(METRE));
                     break;
                 default:

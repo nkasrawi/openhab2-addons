@@ -25,14 +25,14 @@ You need at least one UniFi Controller (Bridge) for this binding to work. It req
 
 The following table describes the Bridge configuration parameters:
 
-| Parameter                | Description                                    | Config   | Default |
-| ------------------------ | ---------------------------------------------- |--------- | ------- |
-| host                     | Hostname of IP address of the UniFi Controller | Required | -       |
-| port                     | Port of the UniFi Controller                   | Required | -       |
-| username                 | The username to access the UniFi Controller    | Required | -       |
-| password                 | The password to access the UniFi Controller    | Required | -       |
-| refresh                  | Refresh interval in seconds                    | Optional | 10      |
-
+| Parameter                | Description                                                                 | Config   | Default |
+| ------------------------ | --------------------------------------------------------------------------- |--------- | ------- |
+| host                     | Hostname of IP address of the UniFi Controller                              | Required | -       |
+| port                     | Port of the UniFi Controller. For UniFi OS, the default port is usually 443 | Required | -       |
+| unifios                  | If the UniFi Controller is running on UniFi OS                              | Required | false   |
+| username                 | The username to access the UniFi Controller                                 | Required | -       |
+| password                 | The password to access the UniFi Controller                                 | Required | -       |
+| refresh                  | Refresh interval in seconds                                                 | Optional | 10      |
 
 ## Thing Configuration
 
@@ -106,10 +106,12 @@ The `reconnect` channel allows you to force a client to reconnect. Sending `ON` 
 things/unifi.things
 
 ```
-Bridge unifi:controller:home "UniFi Controller" [ host="unifi", port=8443, username="$username", password="$password", refresh=10 ] {
+Bridge unifi:controller:home "UniFi Controller" [ host="unifi", port=8443, unifios=false, username="$username", password="$password", refresh=10 ] {
 	Thing wirelessClient matthewsPhone "Matthew's iPhone" [ cid="$cid", site="default", considerHome=180 ]
 }
 ```
+
+_Note: Usually on Unifi OS, the default port is 443_
 
 Replace `$user`, `$password` and `$cid` accordingly.
 

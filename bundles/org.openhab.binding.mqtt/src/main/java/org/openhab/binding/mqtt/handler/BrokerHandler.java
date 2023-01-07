@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,13 +13,13 @@
 package org.openhab.binding.mqtt.handler;
 
 import java.security.NoSuchAlgorithmException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.TrustManager;
 
-import org.apache.commons.lang.StringUtils;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.mqtt.internal.ssl.Pin;
@@ -30,7 +30,6 @@ import org.openhab.binding.mqtt.internal.ssl.PinnedCallback;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.io.transport.mqtt.MqttBrokerConnection;
 import org.openhab.core.io.transport.mqtt.MqttConnectionState;
-import org.openhab.core.io.transport.mqtt.MqttService;
 import org.openhab.core.io.transport.mqtt.MqttWillAndTestament;
 import org.openhab.core.io.transport.mqtt.reconnect.PeriodicReconnectStrategy;
 import org.openhab.core.thing.Bridge;
@@ -41,10 +40,10 @@ import org.slf4j.LoggerFactory;
 /**
  * This handler provided more detailed connection information from a
  * {@link MqttBrokerConnection} via a Thing property, put the Thing
- * offline or online depending on the connection and adds the configured
- * connection to the {@link MqttService}.
+ * offline or online depending on the connection.
  *
  * @author David Graeff - Initial contribution
+ * @author Jimmy Tanagra - Add birth and shutdown message
  */
 @NonNullByDefault
 public class BrokerHandler extends AbstractBrokerHandler implements PinnedCallback {
@@ -58,13 +57,18 @@ public class BrokerHandler extends AbstractBrokerHandler implements PinnedCallba
     @Override
     public void connectionStateChanged(MqttConnectionState state, @Nullable Throwable error) {
         super.connectionStateChanged(state, error);
-        // Store generated client ID if none was set by the user
         final MqttBrokerConnection connection = this.connection;
-        if (connection != null && state == MqttConnectionState.CONNECTED && StringUtils.isBlank(config.clientID)) {
-            config.clientID = connection.getClientId();
-            Configuration editConfig = editConfiguration();
-            editConfig.put("clientid", config.clientID);
-            updateConfiguration(editConfig);
+        if (connection != null && state == MqttConnectionState.CONNECTED) {
+            String clientID = config.clientID;
+            if (clientID == null || clientID.isBlank()) {
+                // Store generated client ID if none was set by the user
+                clientID = connection.getClientId();
+                config.clientID = clientID;
+                Configuration editConfig = editConfiguration();
+                editConfig.put("clientid", clientID);
+                updateConfiguration(editConfig);
+            }
+            publish(config.birthTopic, config.birthMessage, config.birthRetain);
         }
     }
 
@@ -113,6 +117,8 @@ public class BrokerHandler extends AbstractBrokerHandler implements PinnedCallba
     public void dispose() {
         try {
             if (connection != null) {
+                publish(config.shutdownTopic, config.shutdownMessage, config.shutdownRetain).get(1000,
+                        TimeUnit.MILLISECONDS);
                 connection.stop().get(1000, TimeUnit.MILLISECONDS);
             } else {
                 logger.warn("Trying to dispose handler {} but connection is already null. Most likely this is a bug.",
@@ -147,14 +153,14 @@ public class BrokerHandler extends AbstractBrokerHandler implements PinnedCallba
         if (config.certificatepin) {
             try {
                 Pin pin;
-                if (StringUtils.isBlank(config.certificate)) {
-                    pin = Pin.LearningPin(PinType.CERTIFICATE_TYPE);
+                if (config.certificate.isBlank()) {
+                    pin = Pin.learningPin(PinType.CERTIFICATE_TYPE);
                 } else {
                     String[] split = config.certificate.split(":");
                     if (split.length != 2) {
                         throw new NoSuchAlgorithmException("Algorithm is missing");
                     }
-                    pin = Pin.CheckingPin(PinType.CERTIFICATE_TYPE, new PinMessageDigest(split[0]),
+                    pin = Pin.checkingPin(PinType.CERTIFICATE_TYPE, new PinMessageDigest(split[0]),
                             HexUtils.hexToBytes(split[1]));
                 }
                 trustManager.addPinning(pin);
@@ -165,14 +171,14 @@ public class BrokerHandler extends AbstractBrokerHandler implements PinnedCallba
         if (config.publickeypin) {
             try {
                 Pin pin;
-                if (StringUtils.isBlank(config.publickey)) {
-                    pin = Pin.LearningPin(PinType.PUBLIC_KEY_TYPE);
+                if (config.publickey.isBlank()) {
+                    pin = Pin.learningPin(PinType.PUBLIC_KEY_TYPE);
                 } else {
                     String[] split = config.publickey.split(":");
                     if (split.length != 2) {
                         throw new NoSuchAlgorithmException("Algorithm is missing");
                     }
-                    pin = Pin.CheckingPin(PinType.PUBLIC_KEY_TYPE, new PinMessageDigest(split[0]),
+                    pin = Pin.checkingPin(PinType.PUBLIC_KEY_TYPE, new PinMessageDigest(split[0]),
                             HexUtils.hexToBytes(split[1]));
                 }
                 trustManager.addPinning(pin);
@@ -190,7 +196,7 @@ public class BrokerHandler extends AbstractBrokerHandler implements PinnedCallba
      */
     protected MqttBrokerConnection createBrokerConnection() throws IllegalArgumentException {
         String host = config.host;
-        if (StringUtils.isBlank(host) || host == null) {
+        if (host == null || host.isBlank()) {
             throw new IllegalArgumentException("Host is empty!");
         }
 
@@ -199,7 +205,7 @@ public class BrokerHandler extends AbstractBrokerHandler implements PinnedCallba
 
         final String username = config.username;
         final String password = config.password;
-        if (StringUtils.isNotBlank(username) && password != null) {
+        if (username != null && !username.isBlank() && password != null) {
             connection.setCredentials(username, password); // Empty passwords are allowed
         }
 
@@ -234,5 +240,16 @@ public class BrokerHandler extends AbstractBrokerHandler implements PinnedCallba
         this.connection = connection;
 
         super.initialize();
+    }
+
+    /**
+     * Calls the @NonNull MqttBrokerConnection::publish() with @Nullable topic and message
+     */
+    private CompletableFuture<Boolean> publish(@Nullable String topic, @Nullable String message, boolean retain) {
+        if (topic == null || connection == null) {
+            return CompletableFuture.completedFuture(true);
+        }
+        String nonNullMessage = message != null ? message : "";
+        return connection.publish(topic, nonNullMessage.getBytes(), connection.getQos(), retain);
     }
 }

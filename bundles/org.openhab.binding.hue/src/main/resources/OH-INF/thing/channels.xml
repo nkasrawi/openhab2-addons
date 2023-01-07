@@ -3,34 +3,6 @@
 	xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
 	xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
 
-	<!-- Color Channel -->
-	<channel-type id="color">
-		<item-type>Color</item-type>
-		<label>Color</label>
-		<description>The color channel allows to control the color of a light.
-			It is also possible to dim values and switch the
-			light on and off.
-		</description>
-		<category>ColorLight</category>
-		<tags>
-			<tag>Lighting</tag>
-		</tags>
-	</channel-type>
-
-	<!-- Brightness Channel -->
-	<channel-type id="brightness">
-		<item-type>Dimmer</item-type>
-		<label>Brightness</label>
-		<description>The brightness channel allows to control the brightness of a light.
-			It is also possible to switch the
-			light on and off.
-		</description>
-		<category>Light</category>
-		<tags>
-			<tag>Lighting</tag>
-		</tags>
-	</channel-type>
-
 	<channel-type id="last_updated">
 		<item-type>DateTime</item-type>
 		<label>Last Updated</label>
@@ -43,6 +15,10 @@
 		<item-type>Number:Illuminance</item-type>
 		<label>Illuminance</label>
 		<description>Current illuminance.</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Light</tag>
+		</tags>
 		<state readOnly="true" pattern="%.1f %unit%"/>
 	</channel-type>
 
@@ -147,35 +123,17 @@
 		</event>
 	</channel-type>
 
-	<!-- Switch Channel -->
-	<channel-type id="switch">
-		<item-type>Switch</item-type>
-		<label>Switch</label>
-		<description>The switch channel allows to switch the light on and off.
-		</description>
-		<category>Light</category>
-		<tags>
-			<tag>Lighting</tag>
-		</tags>
-	</channel-type>
-
 	<!-- Temperature Channel -->
 	<channel-type id="temperature">
 		<item-type>Number:Temperature</item-type>
 		<label>Temperature</label>
 		<description>Current temperature.</description>
 		<category>Temperature</category>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Temperature</tag>
+		</tags>
 		<state readOnly="true" pattern="%.1f %unit%"/>
-	</channel-type>
-
-	<!-- Color Temperature Channel -->
-	<channel-type id="color_temperature">
-		<item-type>Dimmer</item-type>
-		<label>Color Temperature</label>
-		<description>The color temperature channel allows to set the color
-			temperature of a light from 0 (cold) to 100 (warm).
-		</description>
-		<category>ColorLight</category>
 	</channel-type>
 
 	<!-- Alert Channel -->
@@ -183,6 +141,9 @@
 		<item-type>String</item-type>
 		<label>Alert</label>
 		<description>The alert channel allows a temporary change to the bulb’s state.</description>
+		<tags>
+			<tag>Alarm</tag>
+		</tags>
 		<state>
 			<options>
 				<option value="NONE">None</option>

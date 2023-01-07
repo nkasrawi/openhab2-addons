@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,11 +16,11 @@ import static org.openhab.binding.linky.internal.LinkyBindingConstants.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.WeekFields;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ScheduledFuture;
@@ -36,7 +36,6 @@ import org.openhab.binding.linky.internal.api.ExpiringDayCache;
 import org.openhab.binding.linky.internal.dto.ConsumptionReport.Aggregate;
 import org.openhab.binding.linky.internal.dto.ConsumptionReport.Consumption;
 import org.openhab.binding.linky.internal.dto.PrmInfo;
-import org.openhab.binding.linky.internal.dto.UserInfo;
 import org.openhab.core.i18n.LocaleProvider;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.QuantityType;
@@ -63,25 +62,30 @@ import com.google.gson.Gson;
 
 @NonNullByDefault
 public class LinkyHandler extends BaseThingHandler {
-    private final Logger logger = LoggerFactory.getLogger(LinkyHandler.class);
-
     private static final int REFRESH_FIRST_HOUR_OF_DAY = 1;
     private static final int REFRESH_INTERVAL_IN_MIN = 120;
 
+    private final Logger logger = LoggerFactory.getLogger(LinkyHandler.class);
     private final HttpClient httpClient;
     private final Gson gson;
     private final WeekFields weekFields;
-
-    private @Nullable ScheduledFuture<?> refreshJob;
-    private @Nullable EnedisHttpApi enedisApi;
 
     private final ExpiringDayCache<Consumption> cachedDailyData;
     private final ExpiringDayCache<Consumption> cachedPowerData;
     private final ExpiringDayCache<Consumption> cachedMonthlyData;
     private final ExpiringDayCache<Consumption> cachedYearlyData;
 
+    private @Nullable ScheduledFuture<?> refreshJob;
+    private @Nullable EnedisHttpApi enedisApi;
+
     private @NonNullByDefault({}) String prmId;
     private @NonNullByDefault({}) String userId;
+
+    private enum Target {
+        FIRST,
+        LAST,
+        ALL
+    }
 
     public LinkyHandler(Thing thing, LocaleProvider localeProvider, Gson gson, HttpClient httpClient) {
         super(thing);
@@ -93,24 +97,21 @@ public class LinkyHandler extends BaseThingHandler {
             LocalDate today = LocalDate.now();
             Consumption consumption = getConsumptionData(today.minusDays(15), today);
             if (consumption != null) {
-                logData(consumption.aggregats.days, "Day", false, DateTimeFormatter.ISO_LOCAL_DATE, false);
-                logData(consumption.aggregats.weeks, "Week", true, DateTimeFormatter.ISO_LOCAL_DATE_TIME, false);
-                consumption = getConsumptionAfterChecks(consumption);
+                logData(consumption.aggregats.days, "Day", false, DateTimeFormatter.ISO_LOCAL_DATE, Target.ALL);
+                logData(consumption.aggregats.weeks, "Week", true, DateTimeFormatter.ISO_LOCAL_DATE_TIME, Target.ALL);
+                consumption = getConsumptionAfterChecks(consumption, Target.LAST);
             }
             return consumption;
         });
 
         this.cachedPowerData = new ExpiringDayCache<>("power cache", REFRESH_FIRST_HOUR_OF_DAY, () -> {
-            LocalDate to = LocalDate.now().plusDays(1);
-            LocalDate from = to.minusDays(2);
+            LocalDate to = LocalDate.now();
+            LocalDate from = to.minusDays(1);
             Consumption consumption = getPowerData(from, to);
             if (consumption != null) {
-                try {
-                    checkData(consumption);
-                } catch (LinkyException e) {
-                    logger.debug("Power data: {}", e.getMessage());
-                    return null;
-                }
+                logData(consumption.aggregats.days, "Day (peak)", true, DateTimeFormatter.ISO_LOCAL_DATE_TIME,
+                        Target.ALL);
+                consumption = getConsumptionAfterChecks(consumption, Target.FIRST);
             }
             return consumption;
         });
@@ -119,8 +120,8 @@ public class LinkyHandler extends BaseThingHandler {
             LocalDate today = LocalDate.now();
             Consumption consumption = getConsumptionData(today.withDayOfMonth(1).minusMonths(1), today);
             if (consumption != null) {
-                logData(consumption.aggregats.months, "Month", true, DateTimeFormatter.ISO_LOCAL_DATE_TIME, false);
-                consumption = getConsumptionAfterChecks(consumption);
+                logData(consumption.aggregats.months, "Month", true, DateTimeFormatter.ISO_LOCAL_DATE_TIME, Target.ALL);
+                consumption = getConsumptionAfterChecks(consumption, Target.LAST);
             }
             return consumption;
         });
@@ -129,8 +130,8 @@ public class LinkyHandler extends BaseThingHandler {
             LocalDate today = LocalDate.now();
             Consumption consumption = getConsumptionData(LocalDate.of(today.getYear() - 1, 1, 1), today);
             if (consumption != null) {
-                logData(consumption.aggregats.years, "Year", true, DateTimeFormatter.ISO_LOCAL_DATE_TIME, false);
-                consumption = getConsumptionAfterChecks(consumption);
+                logData(consumption.aggregats.years, "Year", true, DateTimeFormatter.ISO_LOCAL_DATE_TIME, Target.ALL);
+                consumption = getConsumptionAfterChecks(consumption, Target.LAST);
             }
             return consumption;
         });
@@ -142,23 +143,18 @@ public class LinkyHandler extends BaseThingHandler {
         updateStatus(ThingStatus.UNKNOWN);
 
         LinkyConfiguration config = getConfigAs(LinkyConfiguration.class);
-        enedisApi = new EnedisHttpApi(config, gson, httpClient);
-
-        scheduler.submit(() -> {
-            try {
-                EnedisHttpApi api = this.enedisApi;
-                if (api != null) {
+        if (config.seemsValid()) {
+            enedisApi = new EnedisHttpApi(config, gson, httpClient);
+            scheduler.submit(() -> {
+                try {
+                    EnedisHttpApi api = this.enedisApi;
                     api.initialize();
                     updateStatus(ThingStatus.ONLINE);
 
                     if (thing.getProperties().isEmpty()) {
-                        Map<String, String> properties = new HashMap<>();
                         PrmInfo prmInfo = api.getPrmInfo();
-                        UserInfo userInfo = api.getUserInfo();
-                        properties.put(USER_ID, userInfo.userProperties.internId);
-                        properties.put(PUISSANCE, prmInfo.puissanceSouscrite + " kVA");
-                        properties.put(PRM_ID, prmInfo.prmId);
-                        updateProperties(properties);
+                        updateProperties(Map.of(USER_ID, api.getUserInfo().userProperties.internId, PUISSANCE,
+                                prmInfo.puissanceSouscrite + " kVA", PRM_ID, prmInfo.prmId));
                     }
 
                     prmId = thing.getProperties().get(PRM_ID);
@@ -175,13 +171,14 @@ public class LinkyHandler extends BaseThingHandler {
                     refreshJob = scheduler.scheduleWithFixedDelay(this::updateData,
                             ChronoUnit.MINUTES.between(now, nextDayFirstTimeUpdate) % REFRESH_INTERVAL_IN_MIN + 1,
                             REFRESH_INTERVAL_IN_MIN, TimeUnit.MINUTES);
-                } else {
-                    throw new LinkyException("Enedis Api is not initialized");
+                } catch (LinkyException e) {
+                    updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, e.getMessage());
                 }
-            } catch (LinkyException e) {
-                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, e.getMessage());
-            }
-        });
+            });
+        } else {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
+                    "@text/offline.config-error-mandatory-settings");
+        }
     }
 
     /**
@@ -190,8 +187,7 @@ public class LinkyHandler extends BaseThingHandler {
     private synchronized void updateData() {
         boolean connectedBefore = isConnected();
         updatePowerData();
-        updateDailyData();
-        updateWeeklyData();
+        updateDailyWeeklyData();
         updateMonthlyData();
         updateYearlyData();
         if (!connectedBefore && isConnected()) {
@@ -201,10 +197,13 @@ public class LinkyHandler extends BaseThingHandler {
 
     private synchronized void updatePowerData() {
         if (isLinked(PEAK_POWER) || isLinked(PEAK_TIMESTAMP)) {
-            cachedPowerData.getValue().ifPresent(values -> {
+            cachedPowerData.getValue().ifPresentOrElse(values -> {
                 Aggregate days = values.aggregats.days;
                 updateVAChannel(PEAK_POWER, days.datas.get(0));
                 updateState(PEAK_TIMESTAMP, new DateTimeType(days.periodes.get(0).dateDebut));
+            }, () -> {
+                updateKwhChannel(PEAK_POWER, Double.NaN);
+                updateState(PEAK_TIMESTAMP, UnDefType.UNDEF);
             });
         }
     }
@@ -212,22 +211,11 @@ public class LinkyHandler extends BaseThingHandler {
     /**
      * Request new dayly/weekly data and updates channels
      */
-    private synchronized void updateDailyData() {
-        if (isLinked(YESTERDAY)) {
-            cachedDailyData.getValue().ifPresent(values -> {
+    private synchronized void updateDailyWeeklyData() {
+        if (isLinked(YESTERDAY) || isLinked(LAST_WEEK) || isLinked(THIS_WEEK)) {
+            cachedDailyData.getValue().ifPresentOrElse(values -> {
                 Aggregate days = values.aggregats.days;
                 updateKwhChannel(YESTERDAY, days.datas.get(days.datas.size() - 1));
-            });
-        }
-    }
-
-    /**
-     * Request new weekly data and updates channels
-     */
-    private synchronized void updateWeeklyData() {
-        if (isLinked(LAST_WEEK) || isLinked(THIS_WEEK)) {
-            cachedDailyData.getValue().ifPresent(values -> {
-                Aggregate days = values.aggregats.days;
                 int idxLast = days.periodes.get(days.periodes.size() - 1).dateDebut.get(weekFields.dayOfWeek()) == 7 ? 2
                         : 1;
                 Aggregate weeks = values.aggregats.weeks;
@@ -239,6 +227,14 @@ public class LinkyHandler extends BaseThingHandler {
                 } else {
                     updateKwhChannel(THIS_WEEK, 0.0);
                 }
+            }, () -> {
+                updateKwhChannel(YESTERDAY, Double.NaN);
+                if (ZonedDateTime.now().get(weekFields.dayOfWeek()) == 1) {
+                    updateKwhChannel(THIS_WEEK, 0.0);
+                    updateKwhChannel(LAST_WEEK, Double.NaN);
+                } else {
+                    updateKwhChannel(THIS_WEEK, Double.NaN);
+                }
             });
         }
     }
@@ -248,13 +244,20 @@ public class LinkyHandler extends BaseThingHandler {
      */
     private synchronized void updateMonthlyData() {
         if (isLinked(LAST_MONTH) || isLinked(THIS_MONTH)) {
-            cachedMonthlyData.getValue().ifPresent(values -> {
+            cachedMonthlyData.getValue().ifPresentOrElse(values -> {
                 Aggregate months = values.aggregats.months;
                 updateKwhChannel(LAST_MONTH, months.datas.get(0));
                 if (months.datas.size() > 1) {
                     updateKwhChannel(THIS_MONTH, months.datas.get(1));
                 } else {
                     updateKwhChannel(THIS_MONTH, 0.0);
+                }
+            }, () -> {
+                if (ZonedDateTime.now().getDayOfMonth() == 1) {
+                    updateKwhChannel(THIS_MONTH, 0.0);
+                    updateKwhChannel(LAST_MONTH, Double.NaN);
+                } else {
+                    updateKwhChannel(THIS_MONTH, Double.NaN);
                 }
             });
         }
@@ -265,13 +268,20 @@ public class LinkyHandler extends BaseThingHandler {
      */
     private synchronized void updateYearlyData() {
         if (isLinked(LAST_YEAR) || isLinked(THIS_YEAR)) {
-            cachedYearlyData.getValue().ifPresent(values -> {
+            cachedYearlyData.getValue().ifPresentOrElse(values -> {
                 Aggregate years = values.aggregats.years;
                 updateKwhChannel(LAST_YEAR, years.datas.get(0));
                 if (years.datas.size() > 1) {
                     updateKwhChannel(THIS_YEAR, years.datas.get(1));
                 } else {
                     updateKwhChannel(THIS_YEAR, 0.0);
+                }
+            }, () -> {
+                if (ZonedDateTime.now().getDayOfYear() == 1) {
+                    updateKwhChannel(THIS_YEAR, 0.0);
+                    updateKwhChannel(LAST_YEAR, Double.NaN);
+                } else {
+                    updateKwhChannel(THIS_YEAR, Double.NaN);
                 }
             });
         }
@@ -352,6 +362,7 @@ public class LinkyHandler extends BaseThingHandler {
                 updateStatus(ThingStatus.ONLINE);
                 return consumption;
             } catch (LinkyException e) {
+                logger.debug("Exception when getting consumption data: {}", e.getMessage(), e);
                 updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.OFFLINE.COMMUNICATION_ERROR, e.getMessage());
             }
         }
@@ -368,6 +379,7 @@ public class LinkyHandler extends BaseThingHandler {
                 updateStatus(ThingStatus.ONLINE);
                 return consumption;
             } catch (LinkyException e) {
+                logger.debug("Exception when getting power data: {}", e.getMessage(), e);
                 updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.OFFLINE.COMMUNICATION_ERROR, e.getMessage());
             }
         }
@@ -384,7 +396,8 @@ public class LinkyHandler extends BaseThingHandler {
         if (api != null) {
             try {
                 api.dispose();
-            } catch (LinkyException ignore) {
+            } catch (LinkyException e) {
+                logger.debug("disconnect: {}", e.getMessage());
             }
         }
     }
@@ -408,11 +421,9 @@ public class LinkyHandler extends BaseThingHandler {
             boolean connectedBefore = isConnected();
             switch (channelUID.getId()) {
                 case YESTERDAY:
-                    updateDailyData();
-                    break;
                 case LAST_WEEK:
                 case THIS_WEEK:
-                    updateWeeklyData();
+                    updateDailyWeeklyData();
                     break;
                 case LAST_MONTH:
                 case THIS_MONTH:
@@ -437,60 +448,74 @@ public class LinkyHandler extends BaseThingHandler {
         }
     }
 
-    private @Nullable Consumption getConsumptionAfterChecks(Consumption consumption) {
+    private @Nullable Consumption getConsumptionAfterChecks(Consumption consumption, Target target) {
         try {
             checkData(consumption);
         } catch (LinkyException e) {
             logger.debug("Consumption data: {}", e.getMessage());
             return null;
         }
-        if (!isDataLastDayAvailable(consumption)) {
+        if (target == Target.FIRST && !isDataFirstDayAvailable(consumption)) {
+            logger.debug("Data including yesterday are not yet available");
+            return null;
+        }
+        if (target == Target.LAST && !isDataLastDayAvailable(consumption)) {
             logger.debug("Data including yesterday are not yet available");
             return null;
         }
         return consumption;
     }
 
-    public void checkData(Consumption consumption) throws LinkyException {
+    private void checkData(Consumption consumption) throws LinkyException {
         if (consumption.aggregats.days.periodes.size() == 0) {
-            throw new LinkyException("invalid consumptions data: no day period");
+            throw new LinkyException("Invalid consumptions data: no day period");
         }
         if (consumption.aggregats.days.periodes.size() != consumption.aggregats.days.datas.size()) {
-            throw new LinkyException("invalid consumptions data: not one data for each day period");
+            throw new LinkyException("Invalid consumptions data: not any data for each day period");
         }
         if (consumption.aggregats.weeks.periodes.size() == 0) {
-            throw new LinkyException("invalid consumptions data: no week period");
+            throw new LinkyException("Invalid consumptions data: no week period");
         }
         if (consumption.aggregats.weeks.periodes.size() != consumption.aggregats.weeks.datas.size()) {
-            throw new LinkyException("invalid consumptions data: not one data for each week period");
+            throw new LinkyException("Invalid consumptions data: not any data for each week period");
         }
         if (consumption.aggregats.months.periodes.size() == 0) {
-            throw new LinkyException("invalid consumptions data: no month period");
+            throw new LinkyException("Invalid consumptions data: no month period");
         }
         if (consumption.aggregats.months.periodes.size() != consumption.aggregats.months.datas.size()) {
-            throw new LinkyException("invalid consumptions data: not one data for each month period");
+            throw new LinkyException("Invalid consumptions data: not any data for each month period");
         }
         if (consumption.aggregats.years.periodes.size() == 0) {
-            throw new LinkyException("invalid consumptions data: no year period");
+            throw new LinkyException("Invalid consumptions data: no year period");
         }
         if (consumption.aggregats.years.periodes.size() != consumption.aggregats.years.datas.size()) {
-            throw new LinkyException("invalid consumptions data: not one data for each year period");
+            throw new LinkyException("Invalid consumptions data: not any data for each year period");
         }
+    }
+
+    private boolean isDataFirstDayAvailable(Consumption consumption) {
+        Aggregate days = consumption.aggregats.days;
+        logData(days, "First day", false, DateTimeFormatter.ISO_LOCAL_DATE, Target.FIRST);
+        return days.datas != null && days.datas.size() > 0 && !days.datas.get(0).isNaN();
     }
 
     private boolean isDataLastDayAvailable(Consumption consumption) {
         Aggregate days = consumption.aggregats.days;
-        logData(days, "Last day", false, DateTimeFormatter.ISO_LOCAL_DATE, true);
+        logData(days, "Last day", false, DateTimeFormatter.ISO_LOCAL_DATE, Target.LAST);
         return days.datas != null && days.datas.size() > 0 && !days.datas.get(days.datas.size() - 1).isNaN();
     }
 
     private void logData(Aggregate aggregate, String title, boolean withDateFin, DateTimeFormatter dateTimeFormatter,
-            boolean onlyLast) {
+            Target target) {
         if (logger.isDebugEnabled()) {
             int size = (aggregate.datas == null || aggregate.periodes == null) ? 0
                     : (aggregate.datas.size() <= aggregate.periodes.size() ? aggregate.datas.size()
                             : aggregate.periodes.size());
-            if (onlyLast) {
+            if (target == Target.FIRST) {
+                if (size > 0) {
+                    logData(aggregate, 0, title, withDateFin, dateTimeFormatter);
+                }
+            } else if (target == Target.LAST) {
                 if (size > 0) {
                     logData(aggregate, size - 1, title, withDateFin, dateTimeFormatter);
                 }

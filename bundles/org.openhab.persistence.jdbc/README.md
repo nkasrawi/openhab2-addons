@@ -14,8 +14,9 @@ The following databases are currently supported and tested:
 | [HSQLDB](http://hsqldb.org/)                 | [hsqldb-2.3.3.jar](https://mvnrepository.com/artifact/org.hsqldb/hsqldb) |
 | [MariaDB](https://mariadb.org/)              | [mariadb-java-client-1.4.6.jar](https://mvnrepository.com/artifact/org.mariadb.jdbc/mariadb-java-client) |
 | [MySQL](https://www.mysql.com/)              | [mysql-connector-java-5.1.39.jar](https://mvnrepository.com/artifact/mysql/mysql-connector-java) |
-| [PostgreSQL](https://www.postgresql.org/)    | [postgresql-9.4.1209.jre7.jar](https://mvnrepository.com/artifact/org.postgresql/postgresql) |
+| [PostgreSQL](https://www.postgresql.org/)    | [postgresql-42.3.3.jar](https://mvnrepository.com/artifact/org.postgresql/postgresql) |
 | [SQLite](https://www.sqlite.org/)            | [sqlite-jdbc-3.16.1.jar](https://mvnrepository.com/artifact/org.xerial/sqlite-jdbc) |
+| [TimescaleDB](https://www.timescale.com/)    | [postgresql-42.3.3.jar](https://mvnrepository.com/artifact/org.postgresql/postgresql) |
 
 ## Table of Contents
 
@@ -39,17 +40,19 @@ This service can be configured in the file `services/jdbc.cfg`.
 
 | Property                  | Default                                                      | Required  | Description                                                  |
 | ------------------------- | ------------------------------------------------------------ | :-------: | ------------------------------------------------------------ |
-| url                       |                                                              |    Yes    | JDBC URL to establish a connection to your database.  Examples:<br/><br/>`jdbc:derby:./testDerby;create=true`<br/>`jdbc:h2:./testH2`<br/>`jdbc:hsqldb:./testHsqlDb`<br/>`jdbc:mariadb://192.168.0.1:3306/testMariadb`<br/>`jdbc:mysql://192.168.0.1:3306/testMysql?serverTimezone=UTC`<br/>`jdbc:postgresql://192.168.0.1:5432/testPostgresql`<br/>`jdbc:sqlite:./testSqlite.db`.<br/><br/>If no database is available it will be created; for example the url `jdbc:h2:./testH2` creates a new H2 database in openHAB folder. Example to create your own MySQL database directly:<br/><br/>`CREATE DATABASE 'yourDB' CHARACTER SET utf8 COLLATE utf8_general_ci;` |
+| url                       |                                                              |    Yes    | JDBC URL to establish a connection to your database.  Examples:<br/><br/>`jdbc:derby:./testDerby;create=true`<br/>`jdbc:h2:./testH2`<br/>`jdbc:hsqldb:./testHsqlDb`<br/>`jdbc:mariadb://192.168.0.1:3306/testMariadb`<br/>`jdbc:mysql://192.168.0.1:3306/testMysql?serverTimezone=UTC`<br/>`jdbc:postgresql://192.168.0.1:5432/testPostgresql`<br/>`jdbc:timescaledb://192.168.0.1:5432/testPostgresql`<br/>`jdbc:sqlite:./testSqlite.db`.<br/><br/>If no database is available it will be created; for example the url `jdbc:h2:./testH2` creates a new H2 database in openHAB folder. Example to create your own MySQL database directly:<br/><br/>`CREATE DATABASE 'yourDB' CHARACTER SET utf8 COLLATE utf8_general_ci;` |
 | user                      |                                                              | if needed | database user name                                           |
 | password                  |                                                              | if needed | database user password                                       |
 | errReconnectThreshold     | 0                                                            |    No     | when the service is deactivated (0 means ignore)             |
-| sqltype.CALL              | `VARCHAR(200)`                                               |    No     | All `sqlType` options allow you to change the SQL data type used to store values for different openHAB item states.  See the following links for further information: [mybatis](https://mybatis.github.io/mybatis-3/apidocs/reference/org/apache/ibatis/type/JdbcType.html) [H2](http://www.h2database.com/html/datatypes.html) [PostgresSQL](http://www.postgresql.org/docs/9.3/static/datatype.html) |
+| sqltype.CALL              | `VARCHAR(200)`                                               |    No     | All `sqlType` options allow you to change the SQL data type used to store values for different openHAB item states.  See the following links for further information: [mybatis](https://mybatis.github.io/mybatis-3/apidocs/reference/org/apache/ibatis/type/JdbcType.html) [H2](https://www.h2database.com/html/datatypes.html) [PostgresSQL](https://www.postgresql.org/docs/9.3/static/datatype.html) |
 | sqltype.COLOR             | `VARCHAR(70)`                                                |    No     | see above                                                    |
 | sqltype.CONTACT           | `VARCHAR(6)`                                                 |    No     | see above                                                    |
 | sqltype.DATETIME          | `DATETIME`                                                   |    No     | see above                                                    |
 | sqltype.DIMMER            | `TINYINT`                                                    |    No     | see above                                                    |
-| sqltype.LOCATION          | `VARCHAR(30)`                                                |    No     | see above                                                    |
+| sqltype.IMAGE             | `VARCHAR(65500)`                                             |    No     | see above                                                    |
+| sqltype.LOCATION          | `VARCHAR(50)`                                                |    No     | see above                                                    |
 | sqltype.NUMBER            | `DOUBLE`                                                     |    No     | see above                                                    |
+| sqltype.PLAYER            | `VARCHAR(20)`                                                |    No     | see above                                                    |
 | sqltype.ROLLERSHUTTER     | `TINYINT`                                                    |    No     | see above                                                    |
 | sqltype.STRING            | `VARCHAR(65500)`                                             |    No     | see above                                                    |
 | sqltype.SWITCH            | `VARCHAR(6)`                                                 |    No     | see above                                                    |
@@ -125,7 +128,7 @@ The SQL types `DECIMAL` or  `NUMERIC` are precise, but to work with `DOUBLE` is 
 
 The results of database queries of number items are rounded to three decimal places by default.
 With `numberDecimalcount` decimals can be changed.
-Especially if sql types `DECIMAL` or  `NUMERIC` are used for `sqltype.NUMBER`, rounding can be disabled by setting `numberDecimalcount=-1`. 
+Especially if sql types `DECIMAL` or  `NUMERIC` are used for `sqltype.NUMBER`, rounding can be disabled by setting `numberDecimalcount=-1`.
 
 ### For Developers
 
@@ -155,7 +158,7 @@ Used a script like this:
 ```
 var count = 0;
 rule "DB STRESS TEST"
-when 
+when
 	Time cron "30 * * * * ?"
 then
 	if( count = 24) count = 0

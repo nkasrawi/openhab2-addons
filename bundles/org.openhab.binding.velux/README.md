@@ -2,7 +2,7 @@
 # Velux Binding
 
 This binding integrates the <B>Velux</B> devices with help of a gateway, the <B>Velux Bridge KLF200</B>, which is able to control 200 actuators.
-The Velux Binding interacts via the Velux Bridge with any [io-homecontrol](http://www.io-homecontrol.com/)-based
+The Velux Binding interacts via the Velux Bridge with any [io-homecontrol](https://www.io-homecontrol.com/)-based
 devices like window openers, shutters and others.
 
 ![Velux](doc/veluxlogo.jpg)
@@ -11,8 +11,8 @@ Based on the VELUX API this binding integrates <B>Velux</B> and other io-homecon
 
 For details about the features, see the following websites:
 
-- [Velux](http://www.velux.com)
-- [Velux API](http://www.velux.com/api/klf200)
+- [Velux](https://www.velux.com)
+- [Velux API](https://www.velux.com/api/klf200)
 
 ## Supported Things
 
@@ -52,7 +52,7 @@ In addition there are some optional Configuration Parameters.
 |-------------------------|------------------|:--------:|--------------------------------------------------------------|
 | ipAddress               |                  |   Yes    | Hostname or address for accessing the Velux Bridge.          |
 | password                | velux123         |   Yes    | Password for authentication against the Velux Bridge.(\*\*)  |
-| timeoutMsecs            | 2000             |    No    | Communication timeout in milliseconds.                       |
+| timeoutMsecs            | 3000             |    No    | Communication timeout in milliseconds.                       |
 | protocol                | slip             |    No    | Underlying communication protocol (http/https/slip).         |
 | tcpPort                 | 51200            |    No    | TCP port (80 or 51200) for accessing the Velux Bridge.       |
 | retries                 | 5                |    No    | Number of retries during I/O.                                |
@@ -90,9 +90,14 @@ In addition there are some optional Configuration Parameters.
 
 Notes:
 
-1. To enable a complete inversion of all parameter values (i.e. for Velux windows), use the property `inverted` or add a trailing star to the eight-byte serial number. For an example, see below at item `Velux DG Window Bathroom`.
+1. To enable a complete inversion of all parameter values (i.e. for Velux windows), use the property `inverted` or add a trailing star to the eight-byte serial number.
+For an example, see the Thing definition for 'Bathroom_Roof_Window' below.
 
-2. Somfy devices do not provide a valid serial number to the Velux KLF200 gateway. In this case you should enter the default `serial` number 00:00:00:00:00:00:00:00, and in addition enter the `name` parameter; this is the name that you gave to the actuator when you first registered it in the KLF200 Bridge. For an example, see below at item `Velux OG Somfy Shutter`.
+2. Somfy devices do not provide a valid serial number to the Velux KLF200 Bridge.
+For such devices you have to enter the special all-zero serial number 00:00:00:00:00:00:00:00 in the `serial` parameter.
+This special serial number complies with the serial number validation checks, but also makes the binding use the `name` parameter value instead of the `serial` parameter value when it communicates with the KLF Bridge.
+The `name` parameter must therefore contain the name that you gave to the actuator when you first registered it in the KLF200 Bridge.
+For an example, see the Thing definition for 'Living_Room_Awning' below.
 
 ### Thing Configuration for "scene"
 
@@ -222,11 +227,15 @@ The bridge Thing provides the following properties.
 
 ```
 Bridge velux:klf200:g24 "Velux KLF200 Hub" @ "Under Stairs" [ipAddress="192.168.1.xxx", password="secret"] {
-    Thing window w56-36-13-5A-11-2A-05-70 "Bathroom Roof Window" @ "Bathroom" [serial="56:36:13:5A:11:2A:05:70", inverted=true]
+	// Velux (standard) window (with serial number)
+    Thing window Bathroom_Roof_Window "Bathroom Roof Window" @ "Bathroom" [serial="56:36:13:5A:11:2A:05:70", inverted=true]
+
+	// Somfy (non-standard) rollershutter (without serial number)
+    Thing rollershutter Living_Room_Awning "Living Room Awning" @ "Living Room" [serial="00:00:00:00:00:00:00:00", name="Living Room Awning"]
 }
 ```
 
-[=> download sample things file for textual configuration](./doc/conf/things/velux.things)
+See [velux.things](doc/conf/things/velux.things) for more examples.
 
 ### Items
 
@@ -234,7 +243,7 @@ Bridge velux:klf200:g24 "Velux KLF200 Hub" @ "Under Stairs" [ipAddress="192.168.
 Rollershutter Bathroom_Roof_Window_Position "Bathroom Roof Window Position [%.0f %%]" {channel="velux:window:g24:w56-36-13-5A-11-2A-05-70:position"}
 ```
 
-[=> download sample items file for textual configuration](./doc/conf/items/velux.items)
+See [velux.items](doc/conf/items/velux.items) for more examples.
 
 ### Sitemap
 
@@ -244,7 +253,7 @@ Frame label="Velux Windows" {
 }
 ```
 
-[=> download sample sitemaps file for textual configuration](./doc/conf/sitemaps/velux.sitemap)
+See [velux.sitemap](doc/conf/sitemaps/velux.sitemap) for more examples.
 
 ### Rule for closing windows after a period of time
 
@@ -282,7 +291,7 @@ then
 end
 ```
 
-[=> download sample rules file for textual configuration](./doc/conf/rules/velux.rules)
+See [velux.rules](doc/conf/rules/velux.rules) for more examples.
 
 ### Rule for rebooting the Bridge
 
@@ -361,7 +370,7 @@ log:tail
 This, of course, is possible on command line with the commands:
 
 ```
-% openhab-cli console log:set TRACE org.openhab.binding.velux 
+% openhab-cli console log:set TRACE org.openhab.binding.velux
 % openhab-cli console log:tail org.openhab.binding.velux
 ```
 
@@ -449,7 +458,6 @@ The next-generation firmware version two is not backward compatible, and does no
 Notes:
 
 - Velux bridges cannot be returned to version one of the firmware after being upgraded to version two.
-- Firmware updates are currently provided at [Velux download area](https://updates2.velux.com/).
 
 ## Is it possible to run the both communication methods in parallel?
 

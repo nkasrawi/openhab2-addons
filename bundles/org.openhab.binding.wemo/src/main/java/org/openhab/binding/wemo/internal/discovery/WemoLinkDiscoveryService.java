@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,6 +13,7 @@
 package org.openhab.binding.wemo.internal.discovery;
 
 import static org.openhab.binding.wemo.internal.WemoBindingConstants.*;
+import static org.openhab.binding.wemo.internal.WemoUtil.*;
 
 import java.io.StringReader;
 import java.net.URL;
@@ -26,8 +27,8 @@ import java.util.concurrent.TimeUnit;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
-import org.apache.commons.lang.StringEscapeUtils;
-import org.apache.commons.lang.StringUtils;
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.wemo.internal.handler.WemoBridgeHandler;
 import org.openhab.binding.wemo.internal.http.WemoHttpCall;
 import org.openhab.core.config.discovery.AbstractDiscoveryService;
@@ -53,6 +54,7 @@ import org.xml.sax.InputSource;
  * @author Hans-Jörg Merk - Initial contribution
  *
  */
+@NonNullByDefault
 public class WemoLinkDiscoveryService extends AbstractDiscoveryService implements UpnpIOParticipant {
 
     private final Logger logger = LoggerFactory.getLogger(WemoLinkDiscoveryService.class);
@@ -84,7 +86,7 @@ public class WemoLinkDiscoveryService extends AbstractDiscoveryService implement
     /**
      * Schedule for scanning
      */
-    private ScheduledFuture<?> scanningJob;
+    private @Nullable ScheduledFuture<?> scanningJob;
 
     /**
      * The Upnp service
@@ -96,20 +98,12 @@ public class WemoLinkDiscoveryService extends AbstractDiscoveryService implement
     public WemoLinkDiscoveryService(WemoBridgeHandler wemoBridgeHandler, UpnpIOService upnpIOService,
             WemoHttpCall wemoHttpCaller) {
         super(SEARCH_TIME);
+        this.service = upnpIOService;
         this.wemoBridgeHandler = wemoBridgeHandler;
 
         this.wemoHttpCaller = wemoHttpCaller;
 
-        if (upnpIOService != null) {
-            this.service = upnpIOService;
-        } else {
-            logger.debug("upnpIOService not set.");
-        }
-
         this.scanningRunnable = new WemoLinkScan();
-        if (wemoBridgeHandler == null) {
-            logger.warn("no bridge handler for scan given");
-        }
         this.activate(null);
     }
 
@@ -134,103 +128,105 @@ public class WemoLinkDiscoveryService extends AbstractDiscoveryService implement
             URL descriptorURL = service.getDescriptorURL(this);
 
             if (descriptorURL != null) {
-                String deviceURL = StringUtils.substringBefore(descriptorURL.toString(), "/setup.xml");
+                String deviceURL = substringBefore(descriptorURL.toString(), "/setup.xml");
                 String wemoURL = deviceURL + "/upnp/control/bridge1";
 
                 String endDeviceRequest = wemoHttpCaller.executeCall(wemoURL, soapHeader, content);
 
-                if (endDeviceRequest != null) {
-                    logger.trace("endDeviceRequest answered '{}'", endDeviceRequest);
+                logger.trace("endDeviceRequest answered '{}'", endDeviceRequest);
 
-                    try {
-                        String stringParser = StringUtils.substringBetween(endDeviceRequest, "<DeviceLists>",
-                                "</DeviceLists>");
+                try {
+                    String stringParser = substringBetween(endDeviceRequest, "<DeviceLists>", "</DeviceLists>");
 
-                        stringParser = StringEscapeUtils.unescapeXml(stringParser);
+                    stringParser = unescapeXml(stringParser);
 
-                        // check if there are already paired devices with WeMo Link
-                        if ("0".equals(stringParser)) {
-                            logger.debug("There are no devices connected with WeMo Link. Exit discovery");
-                            return;
-                        }
-
-                        // Build parser for received <DeviceList>
-                        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                        DocumentBuilder db = dbf.newDocumentBuilder();
-                        InputSource is = new InputSource();
-                        is.setCharacterStream(new StringReader(stringParser));
-
-                        Document doc = db.parse(is);
-                        NodeList nodes = doc.getElementsByTagName("DeviceInfo");
-
-                        // iterate the devices
-                        for (int i = 0; i < nodes.getLength(); i++) {
-                            Element element = (Element) nodes.item(i);
-
-                            NodeList deviceIndex = element.getElementsByTagName("DeviceIndex");
-                            Element line = (Element) deviceIndex.item(0);
-                            logger.trace("DeviceIndex: {}", getCharacterDataFromElement(line));
-
-                            NodeList deviceID = element.getElementsByTagName("DeviceID");
-                            line = (Element) deviceID.item(0);
-                            String endDeviceID = getCharacterDataFromElement(line);
-                            logger.trace("DeviceID: {}", endDeviceID);
-
-                            NodeList friendlyName = element.getElementsByTagName("FriendlyName");
-                            line = (Element) friendlyName.item(0);
-                            String endDeviceName = getCharacterDataFromElement(line);
-                            logger.trace("FriendlyName: {}", endDeviceName);
-
-                            NodeList vendor = element.getElementsByTagName("Manufacturer");
-                            line = (Element) vendor.item(0);
-                            String endDeviceVendor = getCharacterDataFromElement(line);
-                            logger.trace("Manufacturer: {}", endDeviceVendor);
-
-                            NodeList model = element.getElementsByTagName("ModelCode");
-                            line = (Element) model.item(0);
-                            String endDeviceModelID = getCharacterDataFromElement(line);
-                            endDeviceModelID = endDeviceModelID.replaceAll(NORMALIZE_ID_REGEX, "_");
-
-                            logger.trace("ModelCode: {}", endDeviceModelID);
-
-                            if (SUPPORTED_THING_TYPES.contains(new ThingTypeUID(BINDING_ID, endDeviceModelID))) {
-                                logger.debug("Discovered a WeMo LED Light thing with ID '{}'", endDeviceID);
-
-                                ThingUID bridgeUID = wemoBridgeHandler.getThing().getUID();
-                                ThingTypeUID thingTypeUID = new ThingTypeUID(BINDING_ID, endDeviceModelID);
-
-                                if (thingTypeUID.equals(THING_TYPE_MZ100)) {
-                                    String thingLightId = endDeviceID;
-                                    ThingUID thingUID = new ThingUID(thingTypeUID, bridgeUID, thingLightId);
-
-                                    Map<String, Object> properties = new HashMap<>(1);
-                                    properties.put(DEVICE_ID, endDeviceID);
-
-                                    DiscoveryResult discoveryResult = DiscoveryResultBuilder.create(thingUID)
-                                            .withProperties(properties)
-                                            .withBridge(wemoBridgeHandler.getThing().getUID()).withLabel(endDeviceName)
-                                            .build();
-
-                                    thingDiscovered(discoveryResult);
-                                }
-                            } else {
-                                logger.debug("Discovered an unsupported device :");
-                                logger.debug("DeviceIndex : {}", getCharacterDataFromElement(line));
-                                logger.debug("DeviceID    : {}", endDeviceID);
-                                logger.debug("FriendlyName: {}", endDeviceName);
-                                logger.debug("Manufacturer: {}", endDeviceVendor);
-                                logger.debug("ModelCode   : {}", endDeviceModelID);
-                            }
-
-                        }
-                    } catch (Exception e) {
-                        logger.error("Failed to parse endDevices for bridge '{}'",
-                                wemoBridgeHandler.getThing().getUID(), e);
+                    // check if there are already paired devices with WeMo Link
+                    if ("0".equals(stringParser)) {
+                        logger.debug("There are no devices connected with WeMo Link. Exit discovery");
+                        return;
                     }
+
+                    // Build parser for received <DeviceList>
+                    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+                    // see
+                    // https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html
+                    dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+                    dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+                    dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+                    dbf.setXIncludeAware(false);
+                    dbf.setExpandEntityReferences(false);
+                    DocumentBuilder db = dbf.newDocumentBuilder();
+                    InputSource is = new InputSource();
+                    is.setCharacterStream(new StringReader(stringParser));
+
+                    Document doc = db.parse(is);
+                    NodeList nodes = doc.getElementsByTagName("DeviceInfo");
+
+                    // iterate the devices
+                    for (int i = 0; i < nodes.getLength(); i++) {
+                        Element element = (Element) nodes.item(i);
+
+                        NodeList deviceIndex = element.getElementsByTagName("DeviceIndex");
+                        Element line = (Element) deviceIndex.item(0);
+                        logger.trace("DeviceIndex: {}", getCharacterDataFromElement(line));
+
+                        NodeList deviceID = element.getElementsByTagName("DeviceID");
+                        line = (Element) deviceID.item(0);
+                        String endDeviceID = getCharacterDataFromElement(line);
+                        logger.trace("DeviceID: {}", endDeviceID);
+
+                        NodeList friendlyName = element.getElementsByTagName("FriendlyName");
+                        line = (Element) friendlyName.item(0);
+                        String endDeviceName = getCharacterDataFromElement(line);
+                        logger.trace("FriendlyName: {}", endDeviceName);
+
+                        NodeList vendor = element.getElementsByTagName("Manufacturer");
+                        line = (Element) vendor.item(0);
+                        String endDeviceVendor = getCharacterDataFromElement(line);
+                        logger.trace("Manufacturer: {}", endDeviceVendor);
+
+                        NodeList model = element.getElementsByTagName("ModelCode");
+                        line = (Element) model.item(0);
+                        String endDeviceModelID = getCharacterDataFromElement(line);
+                        endDeviceModelID = endDeviceModelID.replaceAll(NORMALIZE_ID_REGEX, "_");
+
+                        logger.trace("ModelCode: {}", endDeviceModelID);
+
+                        if (SUPPORTED_THING_TYPES.contains(new ThingTypeUID(BINDING_ID, endDeviceModelID))) {
+                            logger.debug("Discovered a WeMo LED Light thing with ID '{}'", endDeviceID);
+
+                            ThingUID bridgeUID = wemoBridgeHandler.getThing().getUID();
+                            ThingTypeUID thingTypeUID = new ThingTypeUID(BINDING_ID, endDeviceModelID);
+
+                            if (thingTypeUID.equals(THING_TYPE_MZ100)) {
+                                String thingLightId = endDeviceID;
+                                ThingUID thingUID = new ThingUID(thingTypeUID, bridgeUID, thingLightId);
+
+                                Map<String, Object> properties = new HashMap<>(1);
+                                properties.put(DEVICE_ID, endDeviceID);
+
+                                DiscoveryResult discoveryResult = DiscoveryResultBuilder.create(thingUID)
+                                        .withProperties(properties).withBridge(wemoBridgeHandler.getThing().getUID())
+                                        .withLabel(endDeviceName).build();
+
+                                thingDiscovered(discoveryResult);
+                            }
+                        } else {
+                            logger.debug("Discovered an unsupported device :");
+                            logger.debug("DeviceIndex : {}", getCharacterDataFromElement(line));
+                            logger.debug("DeviceID    : {}", endDeviceID);
+                            logger.debug("FriendlyName: {}", endDeviceName);
+                            logger.debug("Manufacturer: {}", endDeviceVendor);
+                            logger.debug("ModelCode   : {}", endDeviceModelID);
+                        }
+
+                    }
+                } catch (Exception e) {
+                    logger.warn("Failed to parse endDevices for bridge '{}'", wemoBridgeHandler.getThing().getUID(), e);
                 }
             }
         } catch (Exception e) {
-            logger.error("Failed to get endDevices for bridge '{}'", wemoBridgeHandler.getThing().getUID(), e);
+            logger.warn("Failed to get endDevices for bridge '{}'", wemoBridgeHandler.getThing().getUID(), e);
         }
     }
 
@@ -238,7 +234,9 @@ public class WemoLinkDiscoveryService extends AbstractDiscoveryService implement
     protected void startBackgroundDiscovery() {
         logger.trace("Start WeMo device background discovery");
 
-        if (scanningJob == null || scanningJob.isCancelled()) {
+        ScheduledFuture<?> job = scanningJob;
+
+        if (job == null || job.isCancelled()) {
             this.scanningJob = scheduler.scheduleWithFixedDelay(this.scanningRunnable,
                     LINK_DISCOVERY_SERVICE_INITIAL_DELAY, SCAN_INTERVAL, TimeUnit.SECONDS);
         } else {
@@ -250,10 +248,11 @@ public class WemoLinkDiscoveryService extends AbstractDiscoveryService implement
     protected void stopBackgroundDiscovery() {
         logger.debug("Stop WeMo device background discovery");
 
-        if (scanningJob != null && !scanningJob.isCancelled()) {
-            scanningJob.cancel(true);
-            scanningJob = null;
+        ScheduledFuture<?> job = scanningJob;
+        if (job != null && !job.isCancelled()) {
+            job.cancel(true);
         }
+        scanningJob = null;
     }
 
     @Override
@@ -262,11 +261,11 @@ public class WemoLinkDiscoveryService extends AbstractDiscoveryService implement
     }
 
     @Override
-    public void onServiceSubscribed(String service, boolean succeeded) {
+    public void onServiceSubscribed(@Nullable String service, boolean succeeded) {
     }
 
     @Override
-    public void onValueReceived(String variable, String value, String service) {
+    public void onValueReceived(@Nullable String variable, @Nullable String value, @Nullable String service) {
     }
 
     @Override

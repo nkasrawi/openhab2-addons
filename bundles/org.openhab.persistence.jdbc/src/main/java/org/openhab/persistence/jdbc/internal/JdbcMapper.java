@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,8 @@
  */
 package org.openhab.persistence.jdbc.internal;
 
+import java.sql.SQLInvalidAuthorizationSpecException;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -19,17 +21,21 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.eclipse.jdt.annotation.Nullable;
 import org.knowm.yank.Yank;
 import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.items.Item;
 import org.openhab.core.persistence.FilterCriteria;
 import org.openhab.core.persistence.HistoricItem;
 import org.openhab.core.persistence.PersistenceItemInfo;
-import org.openhab.persistence.jdbc.model.ItemVO;
-import org.openhab.persistence.jdbc.model.ItemsVO;
-import org.openhab.persistence.jdbc.model.JdbcPersistenceItemInfo;
+import org.openhab.core.types.State;
+import org.openhab.persistence.jdbc.dto.ItemVO;
+import org.openhab.persistence.jdbc.dto.ItemsVO;
+import org.openhab.persistence.jdbc.dto.JdbcPersistenceItemInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.zaxxer.hikari.pool.HikariPool.PoolInitializationException;
 
 /**
  * Mapper class
@@ -145,15 +151,19 @@ public class JdbcMapper {
         return vo;
     }
 
-    public Item storeItemValue(Item item) {
-        logger.debug("JDBC::storeItemValue: item={}", item.toString());
+    public Item storeItemValue(Item item, State itemState, @Nullable ZonedDateTime date) {
+        logger.debug("JDBC::storeItemValue: item={} state={} date={}", item, itemState, date);
         String tableName = getTable(item);
         if (tableName == null) {
             logger.error("JDBC::store: Unable to store item '{}'.", item.getName());
             return item;
         }
         long timerStart = System.currentTimeMillis();
-        conf.getDBDAO().doStoreItemValue(item, new ItemVO(tableName, null));
+        if (date == null) {
+            conf.getDBDAO().doStoreItemValue(item, itemState, new ItemVO(tableName, null));
+        } else {
+            conf.getDBDAO().doStoreItemValue(item, itemState, new ItemVO(tableName, null), date);
+        }
         logTime("storeItemValue", timerStart, System.currentTimeMillis());
         errCnt = 0;
         return item;
@@ -166,26 +176,54 @@ public class JdbcMapper {
                 (filter != null), numberDecimalcount, table, item, item.getName());
         if (table != null) {
             long timerStart = System.currentTimeMillis();
-            List<HistoricItem> r = conf.getDBDAO().doGetHistItemFilterQuery(item, filter, numberDecimalcount, table,
-                    item.getName(), timeZoneProvider.getTimeZone());
-            logTime("insertItemValue", timerStart, System.currentTimeMillis());
-            return r;
+            List<HistoricItem> result = conf.getDBDAO().doGetHistItemFilterQuery(item, filter, numberDecimalcount,
+                    table, item.getName(), timeZoneProvider.getTimeZone());
+            logTime("getHistItemFilterQuery", timerStart, System.currentTimeMillis());
+            errCnt = 0;
+            return result;
         } else {
             logger.error("JDBC::getHistItemFilterQuery: TABLE is NULL; cannot get data from non-existent table.");
         }
         return null;
     }
 
+    @SuppressWarnings("null")
+    public boolean deleteItemValues(FilterCriteria filter, String table) {
+        logger.debug("JDBC::deleteItemValues filter='{}' table='{}' itemName='{}'", (filter != null), table,
+                filter.getItemName());
+        if (table != null) {
+            long timerStart = System.currentTimeMillis();
+            conf.getDBDAO().doDeleteItemValues(filter, table, timeZoneProvider.getTimeZone());
+            logTime("deleteItemValues", timerStart, System.currentTimeMillis());
+            errCnt = 0;
+            return true;
+        } else {
+            logger.error("JDBC::deleteItemValues: TABLE is NULL; cannot delete data from non-existent table.");
+            return false;
+        }
+    }
+
     /***********************
      * DATABASE CONNECTION *
      ***********************/
+    @SuppressWarnings("null")
     protected boolean openConnection() {
         logger.debug("JDBC::openConnection isDriverAvailable: {}", conf.isDriverAvailable());
         if (conf.isDriverAvailable() && !conf.isDbConnected()) {
             logger.info("JDBC::openConnection: Driver is available::Yank setupDataSource");
-            Yank.setupDefaultConnectionPool(conf.getHikariConfiguration());
-            conf.setDbConnected(true);
-            return true;
+            try {
+                Yank.setupDefaultConnectionPool(conf.getHikariConfiguration());
+                conf.setDbConnected(true);
+                return true;
+            } catch (PoolInitializationException e) {
+                if (e.getCause() instanceof SQLInvalidAuthorizationSpecException) {
+                    logger.warn("JDBC::openConnection: failed to open connection: {}", e.getCause().getMessage());
+                } else {
+                    logger.warn("JDBC::openConnection: failed to open connection: {}", e.getMessage());
+                }
+                initialized = false;
+                return false;
+            }
         } else if (!conf.isDriverAvailable()) {
             logger.warn("JDBC::openConnection: no driver available!");
             initialized = false;
@@ -230,13 +268,10 @@ public class JdbcMapper {
             logger.info(
                     "JDBC::checkDBSchema: Rebuild complete, configure the 'rebuildTableNames' setting to 'false' to stop rebuilds on startup");
         } else {
-            List<ItemsVO> al;
             // Reset the error counter
             errCnt = 0;
-            al = getItemIDTableNames();
-            for (int i = 0; i < al.size(); i++) {
-                String t = getTableName(al.get(i).getItemid(), al.get(i).getItemname());
-                sqlTables.put(al.get(i).getItemname(), t);
+            for (ItemsVO vo : getItemIDTableNames()) {
+                sqlTables.put(vo.getItemname(), getTableName(vo.getItemid(), vo.getItemname()));
             }
         }
     }
@@ -303,19 +338,17 @@ public class JdbcMapper {
             initialized = false;
         }
 
-        List<ItemsVO> al;
         Map<Integer, String> tableIds = new HashMap<>();
 
         //
-        al = getItemIDTableNames();
-        for (int i = 0; i < al.size(); i++) {
-            String t = getTableName(al.get(i).getItemid(), al.get(i).getItemname());
-            sqlTables.put(al.get(i).getItemname(), t);
-            tableIds.put(al.get(i).getItemid(), t);
+        for (ItemsVO vo : getItemIDTableNames()) {
+            String t = getTableName(vo.getItemid(), vo.getItemname());
+            sqlTables.put(vo.getItemname(), t);
+            tableIds.put(vo.getItemid(), t);
         }
 
         //
-        al = getItemTables();
+        List<ItemsVO> al = getItemTables();
 
         String oldName = "";
         String newName = "";
@@ -375,7 +408,7 @@ public class JdbcMapper {
         // TODO: in general it would be possible to query the count, earliest and latest values for each item too but it
         // would be a very costly operation
         return sqlTables.keySet().stream().map(itemName -> new JdbcPersistenceItemInfo(itemName))
-                .collect(Collectors.<PersistenceItemInfo> toUnmodifiableSet());
+                .collect(Collectors.<PersistenceItemInfo> toSet());
     }
 
     private static String formatRight(final Object value, final int len) {

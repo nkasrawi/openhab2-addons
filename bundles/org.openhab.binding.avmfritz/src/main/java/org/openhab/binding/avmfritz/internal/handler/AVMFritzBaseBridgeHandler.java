@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -64,6 +64,7 @@ import org.slf4j.LoggerFactory;
  * @author Robert Bausdorf - Initial contribution
  * @author Christoph Weitkamp - Added support for AVM FRITZ!DECT 300 and Comet DECT
  * @author Christoph Weitkamp - Added support for groups
+ * @author Ulrich Mertin - Added support for HAN-FUN blinds
  */
 @NonNullByDefault
 public abstract class AVMFritzBaseBridgeHandler extends BaseBridgeHandler {
@@ -296,13 +297,14 @@ public abstract class AVMFritzBaseBridgeHandler extends BaseBridgeHandler {
      * @return ThingUID without illegal characters.
      */
     public @Nullable ThingUID getThingUID(AVMFritzBaseModel device) {
-        ThingTypeUID thingTypeUID = new ThingTypeUID(BINDING_ID, getThingTypeId(device));
+        String id = getThingTypeId(device);
+        ThingTypeUID thingTypeUID = id.isEmpty() ? null : new ThingTypeUID(BINDING_ID, id);
         ThingUID bridgeUID = thing.getUID();
         String thingName = getThingName(device);
 
-        if (SUPPORTED_BUTTON_THING_TYPES_UIDS.contains(thingTypeUID)
+        if (thingTypeUID != null && (SUPPORTED_BUTTON_THING_TYPES_UIDS.contains(thingTypeUID)
                 || SUPPORTED_HEATING_THING_TYPES.contains(thingTypeUID)
-                || SUPPORTED_DEVICE_THING_TYPES_UIDS.contains(thingTypeUID)) {
+                || SUPPORTED_DEVICE_THING_TYPES_UIDS.contains(thingTypeUID))) {
             return new ThingUID(thingTypeUID, bridgeUID, thingName);
         } else if (device.isHeatingThermostat()) {
             return new ThingUID(GROUP_HEATING_THING_TYPE, bridgeUID, thingName);
@@ -326,12 +328,21 @@ public abstract class AVMFritzBaseBridgeHandler extends BaseBridgeHandler {
                 return GROUP_SWITCH;
             }
         } else if (device instanceof DeviceModel && device.isHANFUNUnit()) {
+            if (device.isHANFUNBlinds()) {
+                return DEVICE_HAN_FUN_BLINDS;
+            } else if (device.isColorLight()) {
+                return DEVICE_HAN_FUN_COLOR_BULB;
+            } else if (device.isDimmableLight()) {
+                return DEVICE_HAN_FUN_DIMMABLE_BULB;
+            }
             List<String> interfaces = Arrays
                     .asList(((DeviceModel) device).getEtsiunitinfo().getInterfaces().split(","));
             if (interfaces.contains(HAN_FUN_INTERFACE_ALERT)) {
                 return DEVICE_HAN_FUN_CONTACT;
             } else if (interfaces.contains(HAN_FUN_INTERFACE_SIMPLE_BUTTON)) {
                 return DEVICE_HAN_FUN_SWITCH;
+            } else if (interfaces.contains(HAN_FUN_INTERFACE_ON_OFF)) {
+                return DEVICE_HAN_FUN_ON_OFF;
             }
         }
         return device.getProductName().replaceAll(INVALID_PATTERN, "_");

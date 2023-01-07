@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -20,8 +20,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
-import org.apache.commons.lang.StringUtils;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.mqtt.generic.values.TextValue;
@@ -78,7 +78,7 @@ public class ChannelState implements MqttMessageSubscriber {
         this.channelStateUpdateListener = channelStateUpdateListener;
         this.channelUID = channelUID;
         this.cachedValue = cachedValue;
-        this.readOnly = StringUtils.isBlank(config.commandTopic);
+        this.readOnly = config.commandTopic.isBlank();
     }
 
     public boolean isReadOnly() {
@@ -95,6 +95,10 @@ public class ChannelState implements MqttMessageSubscriber {
         transformationsIn.add(transformation);
     }
 
+    public void addTransformation(String transformation, TransformationServiceProvider transformationServiceProvider) {
+        parseTransformation(transformation, transformationServiceProvider).forEach(t -> addTransformation(t));
+    }
+
     /**
      * Add a transformation that is applied for each value to be published.
      * The transformations are executed in order.
@@ -103,6 +107,18 @@ public class ChannelState implements MqttMessageSubscriber {
      */
     public void addTransformationOut(ChannelStateTransformation transformation) {
         transformationsOut.add(transformation);
+    }
+
+    public void addTransformationOut(String transformation,
+            TransformationServiceProvider transformationServiceProvider) {
+        parseTransformation(transformation, transformationServiceProvider).forEach(t -> addTransformationOut(t));
+    }
+
+    public static Stream<ChannelStateTransformation> parseTransformation(String transformation,
+            TransformationServiceProvider transformationServiceProvider) {
+        String[] transformations = transformation.split("∩");
+        return Stream.of(transformations).filter(t -> !t.isBlank())
+                .map(t -> new ChannelStateTransformation(t, transformationServiceProvider));
     }
 
     /**
@@ -192,8 +208,8 @@ public class ChannelState implements MqttMessageSubscriber {
         try {
             cachedValue.update(command);
         } catch (IllegalArgumentException | IllegalStateException e) {
-            logger.warn("Command '{}' not supported by type '{}': {}", strValue, cachedValue.getClass().getSimpleName(),
-                    e.getMessage());
+            logger.warn("Command '{}' from channel '{}' not supported by type '{}': {}", strValue, channelUID,
+                    cachedValue.getClass().getSimpleName(), e.getMessage());
             receivedOrTimeout();
             return;
         }
@@ -242,7 +258,7 @@ public class ChannelState implements MqttMessageSubscriber {
      */
     public CompletableFuture<@Nullable Void> stop() {
         final MqttBrokerConnection connection = this.connection;
-        if (connection != null && StringUtils.isNotBlank(config.stateTopic)) {
+        if (connection != null && !config.stateTopic.isBlank()) {
             return connection.unsubscribe(config.stateTopic, this).thenRun(this::internalStop);
         } else {
             internalStop();
@@ -251,7 +267,7 @@ public class ChannelState implements MqttMessageSubscriber {
     }
 
     private void internalStop() {
-        logger.debug("Unsubscribed channel {} form topic: {}", this.channelUID, config.stateTopic);
+        logger.debug("Unsubscribed channel {} from topic: {}", this.channelUID, config.stateTopic);
         this.connection = null;
         this.channelStateUpdateListener = null;
         hasSubscribed = false;
@@ -297,7 +313,7 @@ public class ChannelState implements MqttMessageSubscriber {
 
             this.connection = connection;
 
-            if (StringUtils.isBlank(config.stateTopic)) {
+            if (config.stateTopic.isBlank()) {
                 return CompletableFuture.completedFuture(null);
             }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,13 +14,9 @@ package org.openhab.binding.tesla.internal.handler;
 
 import static org.openhab.binding.tesla.internal.TeslaBindingConstants.*;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -30,26 +26,17 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
-import javax.ws.rs.ProcessingException;
 import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientRequestContext;
-import javax.ws.rs.client.ClientRequestFilter;
 import javax.ws.rs.client.Entity;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 
-import org.apache.commons.lang.StringUtils;
-import org.openhab.binding.tesla.internal.TeslaBindingConstants;
 import org.openhab.binding.tesla.internal.discovery.TeslaVehicleDiscoveryService;
-import org.openhab.binding.tesla.internal.protocol.TokenRequest;
-import org.openhab.binding.tesla.internal.protocol.TokenRequestPassword;
-import org.openhab.binding.tesla.internal.protocol.TokenRequestRefreshToken;
-import org.openhab.binding.tesla.internal.protocol.TokenResponse;
 import org.openhab.binding.tesla.internal.protocol.Vehicle;
 import org.openhab.binding.tesla.internal.protocol.VehicleConfig;
-import org.openhab.core.config.core.Configuration;
+import org.openhab.binding.tesla.internal.protocol.sso.TokenResponse;
+import org.openhab.core.io.net.http.HttpClientFactory;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -76,7 +63,7 @@ import com.google.gson.JsonParser;
  */
 public class TeslaAccountHandler extends BaseBridgeHandler {
 
-    public static final int API_MAXIMUM_ERRORS_IN_INTERVAL = 2;
+    public static final int API_MAXIMUM_ERRORS_IN_INTERVAL = 3;
     public static final int API_ERROR_INTERVAL_SECONDS = 15;
     private static final int CONNECT_RETRY_INTERVAL = 15000;
     private static final DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -86,12 +73,13 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
 
     // REST Client API variables
     private final WebTarget teslaTarget;
-    private final WebTarget tokenTarget;
     WebTarget vehiclesTarget; // this cannot be marked final as it is used in the runnable
     final WebTarget vehicleTarget;
     final WebTarget dataRequestTarget;
     final WebTarget commandTarget;
     final WebTarget wakeUpTarget;
+
+    private final TeslaSSOHandler ssoHandler;
 
     // Threading and Job related variables
     protected ScheduledFuture<?> connectJob;
@@ -104,15 +92,15 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
     protected ReentrantLock lock;
 
     private final Gson gson = new Gson();
-    private final JsonParser parser = new JsonParser();
 
     private TokenResponse logonToken;
     private final Set<VehicleListener> vehicleListeners = new HashSet<>();
 
-    public TeslaAccountHandler(Bridge bridge, Client teslaClient) {
+    public TeslaAccountHandler(Bridge bridge, Client teslaClient, HttpClientFactory httpClientFactory) {
         super(bridge);
         this.teslaTarget = teslaClient.target(URI_OWNERS);
-        this.tokenTarget = teslaTarget.path(URI_ACCESS_TOKEN);
+        this.ssoHandler = new TeslaSSOHandler(httpClientFactory.getCommonHttpClient());
+
         this.vehiclesTarget = teslaTarget.path(API_VERSION).path(VEHICLES);
         this.vehicleTarget = vehiclesTarget.path(PATH_VEHICLE_ID);
         this.dataRequestTarget = vehicleTarget.path(PATH_DATA_REQUEST);
@@ -182,6 +170,12 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
     protected boolean checkResponse(Response response, boolean immediatelyFail) {
         if (response != null && response.getStatus() == 200) {
             return true;
+        } else if (response != null && response.getStatus() == 401) {
+            logger.debug("The access token has expired, trying to get a new one.");
+            ThingStatusInfo authenticationResult = authenticate();
+            updateStatus(authenticationResult.getStatus(), authenticationResult.getStatusDetail(),
+                    authenticationResult.getDescription());
+            return false;
         } else {
             apiIntervalErrors++;
             if (immediatelyFail || apiIntervalErrors >= API_MAXIMUM_ERRORS_IN_INTERVAL) {
@@ -211,19 +205,20 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
             Response response = vehiclesTarget.request(MediaType.APPLICATION_JSON_TYPE)
                     .header("Authorization", authHeader).get();
 
-            logger.debug("Querying the vehicle: Response: {}:{}", response.getStatus(), response.getStatusInfo());
+            logger.debug("Querying the vehicle: Response: {}: {}", response.getStatus(),
+                    response.getStatusInfo().getReasonPhrase());
 
             if (!checkResponse(response, true)) {
-                logger.error("An error occurred while querying the vehicle");
+                logger.debug("An error occurred while querying the vehicle");
                 return null;
             }
 
-            JsonObject jsonObject = parser.parse(response.readEntity(String.class)).getAsJsonObject();
+            JsonObject jsonObject = JsonParser.parseString(response.readEntity(String.class)).getAsJsonObject();
             Vehicle[] vehicleArray = gson.fromJson(jsonObject.getAsJsonArray("response"), Vehicle[].class);
 
             for (Vehicle vehicle : vehicleArray) {
-                String responseString = invokeAndParse(vehicle.id, VEHICLE_CONFIG, null, dataRequestTarget);
-                if (StringUtils.isBlank(responseString)) {
+                String responseString = invokeAndParse(vehicle.id, VEHICLE_CONFIG, null, dataRequestTarget, 0);
+                if (responseString == null || responseString.isBlank()) {
                     continue;
                 }
                 VehicleConfig vehicleConfig = gson.fromJson(responseString, VehicleConfig.class);
@@ -253,7 +248,7 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
         return this.getThing().getUID().getId();
     }
 
-    private ThingStatusInfo authenticate() {
+    ThingStatusInfo authenticate() {
         TokenResponse token = logonToken;
 
         boolean hasExpired = true;
@@ -272,111 +267,25 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
         }
 
         if (hasExpired) {
-            String username = (String) getConfig().get(CONFIG_USERNAME);
             String refreshToken = (String) getConfig().get(CONFIG_REFRESHTOKEN);
-            if (refreshToken == null || StringUtils.isEmpty(refreshToken)) {
-                if (!StringUtils.isEmpty(username)) {
-                    String password = (String) getConfig().get(CONFIG_PASSWORD);
-                    return authenticate(username, password);
-                } else {
-                    return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                            "Neither a refresh token nor credentials are provided.");
-                }
+
+            if (refreshToken == null || refreshToken.isEmpty()) {
+                return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
+                        "No refresh token is provided.");
             }
 
-            TokenRequestRefreshToken tokenRequest = null;
-            try {
-                tokenRequest = new TokenRequestRefreshToken(refreshToken);
-            } catch (GeneralSecurityException e) {
-                logger.error("An exception occurred while requesting a new token: '{}'", e.getMessage(), e);
-            }
-
-            String payLoad = gson.toJson(tokenRequest);
-            Response response = null;
-            try {
-                response = tokenTarget.request().post(Entity.entity(payLoad, MediaType.APPLICATION_JSON_TYPE));
-            } catch (ProcessingException e) {
-                return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, e.getMessage());
-            }
-
-            logger.debug("Authenticating: Response: {}:{}", response.getStatus(), response.getStatusInfo());
-
-            if (response.getStatus() == 200 && response.hasEntity()) {
-                String responsePayLoad = response.readEntity(String.class);
-                TokenResponse tokenResponse = gson.fromJson(responsePayLoad.trim(), TokenResponse.class);
-                if (!refreshToken.equals(tokenResponse.refresh_token)) {
-                    Configuration configuration = editConfiguration();
-                    configuration.put(CONFIG_REFRESHTOKEN, tokenResponse.refresh_token);
-                    updateConfiguration(configuration);
-                }
-
-                if (!StringUtils.isEmpty(tokenResponse.access_token)) {
-                    this.logonToken = tokenResponse;
-                    logger.trace("Access Token is {}", logonToken.access_token);
-                }
-                return new ThingStatusInfo(ThingStatus.ONLINE, ThingStatusDetail.NONE, null);
-            } else if (response.getStatus() == 401) {
-                if (!StringUtils.isEmpty(username)) {
-                    String password = (String) getConfig().get(CONFIG_PASSWORD);
-                    return authenticate(username, password);
-                } else {
-                    return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                            "Refresh token is not valid and no credentials are provided.");
-                }
-            } else {
-                return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                        "HTTP returncode " + response.getStatus());
+            this.logonToken = ssoHandler.getAccessToken(refreshToken);
+            if (this.logonToken == null) {
+                return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
+                        "Failed to obtain access token for API.");
             }
         }
+
         return new ThingStatusInfo(ThingStatus.ONLINE, ThingStatusDetail.NONE, null);
     }
 
-    private ThingStatusInfo authenticate(String username, String password) {
-        TokenRequest token = null;
-        try {
-            token = new TokenRequestPassword(username, password);
-        } catch (GeneralSecurityException e) {
-            logger.error("An exception occurred while building a password request token: '{}'", e.getMessage(), e);
-        }
-
-        if (token != null) {
-            String payLoad = gson.toJson(token);
-
-            Response response = tokenTarget.request().post(Entity.entity(payLoad, MediaType.APPLICATION_JSON_TYPE));
-
-            if (response != null) {
-                logger.debug("Authenticating: Response : {}:{}", response.getStatus(), response.getStatusInfo());
-
-                if (response.getStatus() == 200 && response.hasEntity()) {
-                    String responsePayLoad = response.readEntity(String.class);
-                    TokenResponse tokenResponse = gson.fromJson(responsePayLoad.trim(), TokenResponse.class);
-
-                    if (StringUtils.isNotEmpty(tokenResponse.access_token)) {
-                        this.logonToken = tokenResponse;
-                        Configuration cfg = editConfiguration();
-                        cfg.put(TeslaBindingConstants.CONFIG_REFRESHTOKEN, logonToken.refresh_token);
-                        cfg.remove(TeslaBindingConstants.CONFIG_PASSWORD);
-                        updateConfiguration(cfg);
-                        return new ThingStatusInfo(ThingStatus.ONLINE, ThingStatusDetail.NONE, null);
-                    }
-                } else if (response.getStatus() == 401) {
-                    return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                            "Invalid credentials.");
-                } else {
-                    return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                            "HTTP returncode " + response.getStatus());
-                }
-            } else {
-                logger.debug("Authenticating: Response was null");
-                return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                        "Failed retrieving a response from the server.");
-            }
-        }
-        return new ThingStatusInfo(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                "Cannot build request from credentials.");
-    }
-
-    protected String invokeAndParse(String vehicleId, String command, String payLoad, WebTarget target) {
+    protected String invokeAndParse(String vehicleId, String command, String payLoad, WebTarget target,
+            int noOfretries) {
         logger.debug("Invoking: {}", command);
 
         if (vehicleId != null) {
@@ -404,15 +313,25 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
             }
 
             if (!checkResponse(response, false)) {
-                logger.debug("An error occurred while communicating with the vehicle during request {}: {}:{}", command,
-                        (response != null) ? response.getStatus() : "",
-                        (response != null) ? response.getStatusInfo() : "No Response");
+                logger.debug("An error occurred while communicating with the vehicle during request {}: {}: {}",
+                        command, (response != null) ? response.getStatus() : "",
+                        (response != null) ? response.getStatusInfo().getReasonPhrase() : "No Response");
+                if (response.getStatus() == 408 && noOfretries > 0) {
+                    try {
+                        // we give the vehicle a moment to wake up and try the request again
+                        Thread.sleep(TimeUnit.SECONDS.toMillis(API_ERROR_INTERVAL_SECONDS));
+                        logger.debug("Retrying to send the command {}.", command);
+                        return invokeAndParse(vehicleId, command, payLoad, target, noOfretries - 1);
+                    } catch (InterruptedException e) {
+                        return null;
+                    }
+                }
                 return null;
             }
 
             try {
-                JsonObject jsonObject = parser.parse(response.readEntity(String.class)).getAsJsonObject();
-                logger.trace("Request : {}:{}:{} yields {}", command, payLoad, target, jsonObject.get("response"));
+                JsonObject jsonObject = JsonParser.parseString(response.readEntity(String.class)).getAsJsonObject();
+                logger.trace("Request : {}:{} yields {}", command, payLoad, jsonObject.get("response"));
                 return jsonObject.get("response").toString();
             } catch (Exception e) {
                 logger.error("An exception occurred while invoking a REST request: '{}'", e.getMessage());
@@ -426,7 +345,9 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
         try {
             lock.lock();
 
-            if (getThing().getStatus() != ThingStatus.ONLINE) {
+            ThingStatusInfo status = getThing().getStatusInfo();
+            if (status.getStatus() != ThingStatus.ONLINE
+                    && status.getStatusDetail() != ThingStatusDetail.CONFIGURATION_ERROR) {
                 logger.debug("Setting up an authenticated connection to the Tesla back-end");
 
                 ThingStatusInfo authenticationResult = authenticate();
@@ -473,7 +394,12 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
                             updateStatus(ThingStatus.OFFLINE);
                         }
                     }
+                } else if (authenticationResult.getStatusDetail() == ThingStatusDetail.CONFIGURATION_ERROR) {
+                    // make sure to set thing to CONFIGURATION_ERROR in case of failed authentication in order not to
+                    // hit request limit on retries on the Tesla SSO endpoints.
+                    updateStatus(ThingStatus.OFFLINE, authenticationResult.getStatusDetail());
                 }
+
             }
         } catch (Exception e) {
             logger.error("An exception occurred while connecting to the Tesla back-end: '{}'", e.getMessage(), e);
@@ -482,40 +408,23 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
         }
     };
 
-    public static class Authenticator implements ClientRequestFilter {
-        private final String user;
-        private final String password;
-
-        public Authenticator(String user, String password) {
-            this.user = user;
-            this.password = password;
-        }
-
-        @Override
-        public void filter(ClientRequestContext requestContext) throws IOException {
-            MultivaluedMap<String, Object> headers = requestContext.getHeaders();
-            final String basicAuthentication = getBasicAuthentication();
-            headers.add("Authorization", basicAuthentication);
-        }
-
-        private String getBasicAuthentication() {
-            String token = this.user + ":" + this.password;
-            return "Basic " + Base64.getEncoder().encodeToString(token.getBytes(StandardCharsets.UTF_8));
-        }
-    }
-
     protected class Request implements Runnable {
+
+        private static final int NO_OF_RETRIES = 3;
 
         private TeslaVehicleHandler handler;
         private String request;
         private String payLoad;
         private WebTarget target;
+        private boolean allowWakeUpForCommands;
 
-        public Request(TeslaVehicleHandler handler, String request, String payLoad, WebTarget target) {
+        public Request(TeslaVehicleHandler handler, String request, String payLoad, WebTarget target,
+                boolean allowWakeUpForCommands) {
             this.handler = handler;
             this.request = request;
             this.payLoad = payLoad;
             this.target = target;
+            this.allowWakeUpForCommands = allowWakeUpForCommands;
         }
 
         @Override
@@ -524,7 +433,8 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
                 String result = "";
 
                 if (getThing().getStatus() == ThingStatus.ONLINE) {
-                    result = invokeAndParse(handler.getVehicleId(), request, payLoad, target);
+                    result = invokeAndParse(handler.getVehicleId(), request, payLoad, target,
+                            allowWakeUpForCommands ? NO_OF_RETRIES : 0);
                     if (result != null && !"".equals(result)) {
                         handler.parseAndUpdate(request, payLoad, result);
                     }
@@ -535,9 +445,9 @@ public class TeslaAccountHandler extends BaseBridgeHandler {
         }
     }
 
-    public Request newRequest(TeslaVehicleHandler teslaVehicleHandler, String command, String payLoad,
-            WebTarget target) {
-        return new Request(teslaVehicleHandler, command, payLoad, target);
+    public Request newRequest(TeslaVehicleHandler teslaVehicleHandler, String command, String payLoad, WebTarget target,
+            boolean allowWakeUpForCommands) {
+        return new Request(teslaVehicleHandler, command, payLoad, target, allowWakeUpForCommands);
     }
 
     @Override

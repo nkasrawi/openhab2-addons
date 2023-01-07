@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -40,7 +40,6 @@ import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.thing.binding.BaseThingHandler;
-import org.openhab.core.thing.type.ChannelTypeUID;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.RefreshType;
 import org.openhab.core.types.State;
@@ -56,11 +55,11 @@ import org.slf4j.LoggerFactory;
  */
 @NonNullByDefault
 public class OpenUVReportHandler extends BaseThingHandler {
-    private static final DecimalType ALERT_GREEN = DecimalType.ZERO;
-    private static final DecimalType ALERT_YELLOW = new DecimalType(1);
-    private static final DecimalType ALERT_ORANGE = new DecimalType(2);
-    private static final DecimalType ALERT_RED = new DecimalType(3);
-    private static final DecimalType ALERT_PURPLE = new DecimalType(4);
+    private static final State ALERT_GREEN = DecimalType.ZERO;
+    private static final State ALERT_YELLOW = new DecimalType(1);
+    private static final State ALERT_ORANGE = new DecimalType(2);
+    private static final State ALERT_RED = new DecimalType(3);
+    private static final State ALERT_PURPLE = new DecimalType(4);
     private static final State ALERT_UNDEF = HSBType.fromRGB(179, 179, 179);
 
     private static final Map<State, State> ALERT_COLORS = Map.of(ALERT_GREEN, HSBType.fromRGB(85, 139, 47),
@@ -86,11 +85,11 @@ public class OpenUVReportHandler extends BaseThingHandler {
 
         if (config.refresh < 3) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "Parameter 'refresh' must be higher than 3 minutes to stay in free API plan");
+                    "@text/offline.config-error-invalid-refresh");
         } else {
             Bridge bridge = getBridge();
             if (bridge == null) {
-                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Invalid bridge");
+                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED);
             } else {
                 bridgeHandler = (OpenUVBridgeHandler) bridge.getHandler();
                 updateStatus(ThingStatus.UNKNOWN);
@@ -145,9 +144,8 @@ public class OpenUVReportHandler extends BaseThingHandler {
                     location.getLongitude().toString(), location.getAltitude().toString());
             if (openUVData != null) {
                 scheduleUVMaxEvent(openUVData);
-                getThing().getChannels().forEach(channel -> {
-                    updateChannel(channel.getUID(), openUVData);
-                });
+                getThing().getChannels().stream().filter(channel -> isLinked(channel.getUID().getId()))
+                        .forEach(channel -> updateState(channel.getUID(), getState(channel, openUVData)));
                 updateStatus(ThingStatus.ONLINE);
             } else {
                 updateStatus(ThingStatus.OFFLINE, bridgeStatusInfo.getStatusDetail(),
@@ -159,13 +157,13 @@ public class OpenUVReportHandler extends BaseThingHandler {
     @Override
     public void dispose() {
         logger.debug("Disposing the OpenUV handler.");
-        ScheduledFuture<?> refresh = this.refreshJob;
+        ScheduledFuture<?> refresh = refreshJob;
         if (refresh != null && !refresh.isCancelled()) {
             refresh.cancel(true);
         }
         refreshJob = null;
 
-        ScheduledFuture<?> uxMax = this.uvMaxJob;
+        ScheduledFuture<?> uxMax = uvMaxJob;
         if (uxMax != null && !uxMax.isCancelled()) {
             uxMax.cancel(true);
         }
@@ -181,7 +179,7 @@ public class OpenUVReportHandler extends BaseThingHandler {
             });
         } else if (ELEVATION.equals(channelUID.getId()) && command instanceof QuantityType) {
             QuantityType<?> qtty = (QuantityType<?>) command;
-            if (qtty.getUnit() == Units.DEGREE_ANGLE) {
+            if (Units.DEGREE_ANGLE.equals(qtty.getUnit())) {
                 suspendUpdates = qtty.doubleValue() < 0;
             } else {
                 logger.info("The OpenUV Report handles Sun Elevation of Number:Angle type, {} does not fit.", command);
@@ -191,52 +189,31 @@ public class OpenUVReportHandler extends BaseThingHandler {
         }
     }
 
-    /**
-     * Update the channel from the last OpenUV data retrieved
-     *
-     * @param channelUID the id identifying the channel to be updated
-     * @param openUVData
-     *
-     */
-    private void updateChannel(ChannelUID channelUID, OpenUVResult openUVData) {
-        Channel channel = getThing().getChannel(channelUID.getId());
-        if (channel != null && isLinked(channelUID)) {
-            ChannelTypeUID channelTypeUID = channel.getChannelTypeUID();
-            if (channelTypeUID != null) {
-                switch (channelTypeUID.getId()) {
-                    case UV_INDEX:
-                        updateState(channelUID, new DecimalType(openUVData.getUv()));
-                        break;
-                    case ALERT_LEVEL:
-                        updateState(channelUID, asAlertLevel(openUVData.getUv()));
-                        break;
-                    case UV_COLOR:
-                        updateState(channelUID,
-                                ALERT_COLORS.getOrDefault(asAlertLevel(openUVData.getUv()), ALERT_UNDEF));
-                        break;
-                    case UV_MAX:
-                        updateState(channelUID, new DecimalType(openUVData.getUvMax()));
-                        break;
-                    case OZONE:
-                        updateState(channelUID, new QuantityType<>(openUVData.getOzone(), Units.DOBSON_UNIT));
-                        break;
-                    case OZONE_TIME:
-                        updateState(channelUID, openUVData.getOzoneTime());
-                        break;
-                    case UV_MAX_TIME:
-                        updateState(channelUID, openUVData.getUVMaxTime());
-                        break;
-                    case UV_TIME:
-                        updateState(channelUID, openUVData.getUVTime());
-                        break;
-                    case SAFE_EXPOSURE:
-                        SafeExposureConfiguration configuration = channel.getConfiguration()
-                                .as(SafeExposureConfiguration.class);
-                        updateState(channelUID, openUVData.getSafeExposureTime(configuration.index));
-                        break;
-                }
-            }
+    private State getState(Channel channel, OpenUVResult openUVData) {
+        ChannelUID uid = channel.getUID();
+        switch (uid.getId()) {
+            case UV_INDEX:
+                return new DecimalType(openUVData.getUv());
+            case ALERT_LEVEL:
+                return asAlertLevel(openUVData.getUv());
+            case UV_COLOR:
+                return ALERT_COLORS.getOrDefault(asAlertLevel(openUVData.getUv()), ALERT_UNDEF);
+            case UV_MAX:
+                return new DecimalType(openUVData.getUvMax());
+            case OZONE:
+                return new QuantityType<>(openUVData.getOzone(), Units.DOBSON_UNIT);
+            case OZONE_TIME:
+                return openUVData.getOzoneTime();
+            case UV_MAX_TIME:
+                return openUVData.getUVMaxTime();
+            case UV_TIME:
+                return openUVData.getUVTime();
+            case SAFE_EXPOSURE:
+                SafeExposureConfiguration configuration = channel.getConfiguration()
+                        .as(SafeExposureConfiguration.class);
+                return openUVData.getSafeExposureTime(configuration.index);
         }
+        return UnDefType.NULL;
     }
 
     private State asAlertLevel(double uv) {

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.pulseaudio.internal.PulseaudioClient;
 import org.openhab.binding.pulseaudio.internal.items.AbstractAudioDeviceConfig;
 import org.openhab.binding.pulseaudio.internal.items.Module;
@@ -34,6 +36,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author Tobias Bräutigam - Initial contribution
  */
+@NonNullByDefault
 public class Parser {
     private static final Logger LOGGER = LoggerFactory.getLogger(Parser.class);
 
@@ -135,14 +138,15 @@ public class Parser {
                     }
                 }
                 if (properties.containsKey("muted")) {
-                    sink.setMuted(properties.get("muted").equalsIgnoreCase("yes"));
+                    sink.setMuted("yes".equalsIgnoreCase(properties.get("muted")));
                 }
                 if (properties.containsKey("volume")) {
                     sink.setVolume(Integer.valueOf(parseVolume(properties.get("volume"))));
                 }
                 if (properties.containsKey("combine.slaves")) {
                     // this is a combined sink, the combined sink object should be
-                    for (String sinkName : properties.get("combine.slaves").replace("\"", "").split(",")) {
+                    String sinkNames = properties.get("combine.slaves");
+                    for (String sinkName : sinkNames.replace("\"", "").split(",")) {
                         sink.addCombinedSinkName(sinkName);
                     }
                     combinedSinks.add(sink);
@@ -203,7 +207,7 @@ public class Parser {
                     }
                 }
                 if (properties.containsKey("muted")) {
-                    item.setMuted(properties.get("muted").equalsIgnoreCase("yes"));
+                    item.setMuted("yes".equalsIgnoreCase(properties.get("muted")));
                 }
                 if (properties.containsKey("volume")) {
                     item.setVolume(Integer.valueOf(parseVolume(properties.get("volume"))));
@@ -262,13 +266,13 @@ public class Parser {
                     }
                 }
                 if (properties.containsKey("muted")) {
-                    source.setMuted(properties.get("muted").equalsIgnoreCase("yes"));
+                    source.setMuted("yes".equalsIgnoreCase(properties.get("muted")));
                 }
                 if (properties.containsKey("volume")) {
                     source.setVolume(parseVolume(properties.get("volume")));
                 }
-                String monitorOf = properties.get("monitor_of");
-                if (monitorOf != null) {
+                if (properties.containsKey("monitor_of")) {
+                    String monitorOf = properties.get("monitor_of");
                     source.setMonitorOf(client.getSink(Integer.valueOf(monitorOf)));
                 }
                 sources.add(source);
@@ -322,7 +326,7 @@ public class Parser {
                     }
                 }
                 if (properties.containsKey("muted")) {
-                    item.setMuted(properties.get("muted").equalsIgnoreCase("yes"));
+                    item.setMuted("yes".equalsIgnoreCase(properties.get("muted")));
                 }
                 if (properties.containsKey("volume")) {
                     item.setVolume(Integer.valueOf(parseVolume(properties.get("volume"))));
@@ -370,7 +374,7 @@ public class Parser {
      * @param raw
      * @return
      */
-    private static int getNumberValue(String raw) {
+    private static int getNumberValue(@Nullable String raw) {
         int id = -1;
         if (raw == null) {
             return 0;

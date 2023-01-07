@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -31,12 +31,20 @@ public class TeslaBindingConstants {
     public static final String PATH_DATA_REQUEST = "data_request/{cmd}";
     public static final String PATH_VEHICLE_ID = "/{vid}/";
     public static final String PATH_WAKE_UP = "wake_up";
-    public static final String URI_ACCESS_TOKEN = "oauth/token";
+    public static final String PATH_ACCESS_TOKEN = "oauth/token";
     public static final String URI_EVENT = "https://streaming.vn.teslamotors.com/stream/";
-    public static final String URI_OWNERS = "https://owner-api.teslamotors.com/";
+    public static final String URI_OWNERS = "https://owner-api.teslamotors.com";
     public static final String VALETPIN = "valetpin";
     public static final String VEHICLES = "vehicles";
     public static final String VIN = "vin";
+
+    // SSO URI constants
+    public static final String SSO_SCOPES = "openid email offline_access";
+    public static final String URI_SSO = "https://auth.tesla.com/oauth2/v3";
+    public static final String PATH_AUTHORIZE = "authorize";
+    public static final String PATH_TOKEN = "token";
+    public static final String URI_CALLBACK = "https://auth.tesla.com/void/callback";
+    public static final String CLIENT_ID = "ownerapi";
 
     // Tesla REST API commands
     public static final String COMMAND_ACTUATE_TRUNK = "actuate_trunk";
@@ -52,7 +60,9 @@ public class TeslaBindingConstants {
     public static final String COMMAND_HONK_HORN = "honk_horn";
     public static final String COMMAND_OPEN_CHARGE_PORT = "charge_port_door_open";
     public static final String COMMAND_RESET_VALET_PIN = "reset_valet_pin";
+    public static final String COMMAND_SET_CHARGING_AMPS = "set_charging_amps";
     public static final String COMMAND_SET_CHARGE_LIMIT = "set_charge_limit";
+    public static final String COMMAND_SET_SENTRY_MODE = "set_sentry_mode";
     public static final String COMMAND_SET_TEMP = "set_temps";
     public static final String COMMAND_SET_VALET_MODE = "set_valet_mode";
     public static final String COMMAND_SUN_ROOF = "sun_roof_control";
@@ -99,8 +109,7 @@ public class TeslaBindingConstants {
 
     // thing configurations
     public static final String CONFIG_ALLOWWAKEUP = "allowWakeup";
+    public static final String CONFIG_ALLOWWAKEUPFORCOMMANDS = "allowWakeupForCommands";
     public static final String CONFIG_ENABLEEVENTS = "enableEvents";
     public static final String CONFIG_REFRESHTOKEN = "refreshToken";
-    public static final String CONFIG_USERNAME = "username";
-    public static final String CONFIG_PASSWORD = "password";
 }

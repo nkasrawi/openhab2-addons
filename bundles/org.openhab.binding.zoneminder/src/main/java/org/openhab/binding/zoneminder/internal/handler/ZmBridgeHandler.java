@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -41,6 +41,7 @@ import org.openhab.binding.zoneminder.internal.ZmStateDescriptionOptionsProvider
 import org.openhab.binding.zoneminder.internal.config.ZmBridgeConfig;
 import org.openhab.binding.zoneminder.internal.discovery.MonitorDiscoveryService;
 import org.openhab.binding.zoneminder.internal.dto.EventDTO;
+import org.openhab.binding.zoneminder.internal.dto.EventSummaryDTO;
 import org.openhab.binding.zoneminder.internal.dto.EventsDTO;
 import org.openhab.binding.zoneminder.internal.dto.MonitorDTO;
 import org.openhab.binding.zoneminder.internal.dto.MonitorItemDTO;
@@ -145,7 +146,7 @@ public class ZmBridgeHandler extends BaseBridgeHandler {
         host = config.host;
         useSSL = config.useSSL.booleanValue();
         portNumber = config.portNumber != null ? Integer.toString(config.portNumber) : null;
-        urlPath = config.urlPath;
+        urlPath = "/".equals(config.urlPath) ? "" : config.urlPath;
 
         // If user and password are configured, then use Zoneminder authentication
         if (config.user != null && config.pass != null) {
@@ -302,29 +303,27 @@ public class ZmBridgeHandler extends BaseBridgeHandler {
         }
         try {
             String response = executeGet(buildUrl("/api/monitors.json"));
-            MonitorsDTO monitors = GSON.fromJson(response, MonitorsDTO.class);
-            if (monitors != null && monitors.monitorItems != null) {
+            MonitorsDTO monitorsDTO = GSON.fromJson(response, MonitorsDTO.class);
+            if (monitorsDTO != null && monitorsDTO.monitorItems != null) {
                 List<StateOption> options = new ArrayList<>();
-                for (MonitorItemDTO monitorItem : monitors.monitorItems) {
-                    MonitorDTO m = monitorItem.monitor;
-                    MonitorStatusDTO mStatus = monitorItem.monitorStatus;
-                    if (m != null && mStatus != null) {
-                        Monitor monitor = new Monitor(m.id, m.name, m.function, m.enabled, mStatus.status);
-                        monitor.setHourEvents(m.hourEvents);
-                        monitor.setDayEvents(m.dayEvents);
-                        monitor.setWeekEvents(m.weekEvents);
-                        monitor.setMonthEvents(m.monthEvents);
-                        monitor.setTotalEvents(m.totalEvents);
-                        monitor.setImageUrl(buildStreamUrl(m.id, STREAM_IMAGE));
-                        monitor.setVideoUrl(buildStreamUrl(m.id, STREAM_VIDEO));
+                for (MonitorItemDTO monitorItemDTO : monitorsDTO.monitorItems) {
+                    MonitorDTO monitorDTO = monitorItemDTO.monitor;
+                    MonitorStatusDTO monitorStatusDTO = monitorItemDTO.monitorStatus;
+                    if (monitorDTO != null && monitorStatusDTO != null) {
+                        Monitor monitor = new Monitor(monitorDTO.id, monitorDTO.name, monitorDTO.function,
+                                monitorDTO.enabled, monitorStatusDTO.status);
+                        extractEventCounts(monitor, monitorItemDTO);
+                        monitor.setImageUrl(buildStreamUrl(monitorDTO.id, STREAM_IMAGE));
+                        monitor.setVideoUrl(buildStreamUrl(monitorDTO.id, STREAM_VIDEO));
                         monitorList.add(monitor);
-                        options.add(new StateOption(m.id, "Monitor " + m.id));
+                        options.add(new StateOption(monitorDTO.id, "Monitor " + monitorDTO.id));
                     }
-                    stateDescriptionProvider
-                            .setStateOptions(new ChannelUID(getThing().getUID(), CHANNEL_IMAGE_MONITOR_ID), options);
-                    stateDescriptionProvider
-                            .setStateOptions(new ChannelUID(getThing().getUID(), CHANNEL_VIDEO_MONITOR_ID), options);
                 }
+                // Update state options
+                stateDescriptionProvider.setStateOptions(new ChannelUID(getThing().getUID(), CHANNEL_IMAGE_MONITOR_ID),
+                        options);
+                stateDescriptionProvider.setStateOptions(new ChannelUID(getThing().getUID(), CHANNEL_VIDEO_MONITOR_ID),
+                        options);
                 // Only update alarm and event info for monitors whose handlers are initialized
                 Set<String> ids = monitorHandlers.keySet();
                 for (Monitor m : monitorList) {
@@ -340,6 +339,30 @@ public class ZmBridgeHandler extends BaseBridgeHandler {
         return monitorList;
     }
 
+    private void extractEventCounts(Monitor monitor, MonitorItemDTO monitorItemDTO) {
+        /*
+         * The Zoneminder API changed in version 1.36.x such that the event counts moved from the
+         * monitor object to a new event summary object. Therefore, if the event summary object
+         * exists in the JSON response, pull the event counts from that object, otherwise get the
+         * counts from the monitor object.
+         */
+        if (monitorItemDTO.eventSummary != null) {
+            EventSummaryDTO eventSummaryDTO = monitorItemDTO.eventSummary;
+            monitor.setHourEvents(eventSummaryDTO.hourEvents);
+            monitor.setDayEvents(eventSummaryDTO.dayEvents);
+            monitor.setWeekEvents(eventSummaryDTO.weekEvents);
+            monitor.setMonthEvents(eventSummaryDTO.monthEvents);
+            monitor.setTotalEvents(eventSummaryDTO.totalEvents);
+        } else {
+            MonitorDTO monitorDTO = monitorItemDTO.monitor;
+            monitor.setHourEvents(monitorDTO.hourEvents);
+            monitor.setDayEvents(monitorDTO.dayEvents);
+            monitor.setWeekEvents(monitorDTO.weekEvents);
+            monitor.setMonthEvents(monitorDTO.monthEvents);
+            monitor.setTotalEvents(monitorDTO.totalEvents);
+        }
+    }
+
     @SuppressWarnings("null")
     private @Nullable Event getLastEvent(String id) {
         if (!zmAuth.isAuthorized()) {
@@ -350,8 +373,8 @@ public class ZmBridgeHandler extends BaseBridgeHandler {
             parameters.add("sort=StartTime");
             parameters.add("direction=desc");
             parameters.add("limit=1");
-            String response = executeGet(
-                    buildUrlWithParameters(String.format("/api/events/index/MonitorId:%s.json", id), parameters));
+            String response = executeGet(buildUrlWithParameters(
+                    String.format("/api/events/index/MonitorId:%s/Name!=:New%%20Event.json", id), parameters));
             EventsDTO events = GSON.fromJson(response, EventsDTO.class);
             if (events != null && events.eventsList != null && events.eventsList.size() == 1) {
                 EventDTO e = events.eventsList.get(0).event;

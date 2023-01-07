@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -20,7 +20,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.regex.Pattern;
 
-import org.apache.commons.lang.StringUtils;
 import org.openhab.binding.denonmarantz.internal.DenonMarantzState;
 import org.openhab.binding.denonmarantz.internal.config.DenonMarantzConfiguration;
 import org.openhab.binding.denonmarantz.internal.connector.DenonMarantzConnector;
@@ -127,6 +126,7 @@ public class DenonMarantzTelnetConnector extends DenonMarantzConnector implement
                     Thread.sleep(300);
                 } catch (InterruptedException e) {
                     logger.trace("requestStateOverTelnet() - Interrupted while requesting state.");
+                    Thread.currentThread().interrupt();
                 }
             }
         });
@@ -165,7 +165,7 @@ public class DenonMarantzTelnetConnector extends DenonMarantzConnector implement
                     state.setSurroundProgram(value);
                     break;
                 case "MV": // Main zone volume
-                    if (StringUtils.isNumeric(value)) {
+                    if (value.chars().allMatch(Character::isDigit)) {
                         state.setMainVolume(fromDenonValue(value));
                     }
                     break;
@@ -182,7 +182,7 @@ public class DenonMarantzTelnetConnector extends DenonMarantzConnector implement
                         state.setZone2Power(value.equals("ON"));
                     } else if (value.equals("MUON") || value.equals("MUOFF")) {
                         state.setZone2Mute(value.equals("MUON"));
-                    } else if (StringUtils.isNumeric(value)) {
+                    } else if (value.chars().allMatch(Character::isDigit)) {
                         state.setZone2Volume(fromDenonValue(value));
                     } else {
                         state.setZone2Input(value);
@@ -193,7 +193,7 @@ public class DenonMarantzTelnetConnector extends DenonMarantzConnector implement
                         state.setZone3Power(value.equals("ON"));
                     } else if (value.equals("MUON") || value.equals("MUOFF")) {
                         state.setZone3Mute(value.equals("MUON"));
-                    } else if (StringUtils.isNumeric(value)) {
+                    } else if (value.chars().allMatch(Character::isDigit)) {
                         state.setZone3Volume(fromDenonValue(value));
                     } else {
                         state.setZone3Input(value);
@@ -204,7 +204,7 @@ public class DenonMarantzTelnetConnector extends DenonMarantzConnector implement
                         state.setZone4Power(value.equals("ON"));
                     } else if (value.equals("MUON") || value.equals("MUOFF")) {
                         state.setZone4Mute(value.equals("MUON"));
-                    } else if (StringUtils.isNumeric(value)) {
+                    } else if (value.chars().allMatch(Character::isDigit)) {
                         state.setZone4Volume(fromDenonValue(value));
                     } else {
                         state.setZone4Input(value);
@@ -263,7 +263,7 @@ public class DenonMarantzTelnetConnector extends DenonMarantzConnector implement
     @Override
     protected void internalSendCommand(String command) {
         logger.debug("Sending command '{}'", command);
-        if (StringUtils.isBlank(command)) {
+        if (command == null || command.isBlank()) {
             logger.warn("Trying to send empty command");
             return;
         }

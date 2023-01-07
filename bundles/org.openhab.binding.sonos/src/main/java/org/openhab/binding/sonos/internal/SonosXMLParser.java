@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,7 +25,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.commons.lang.StringEscapeUtils;
+import org.apache.commons.lang3.StringEscapeUtils;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.slf4j.Logger;
@@ -134,6 +134,7 @@ public class SonosXMLParser {
      */
     public static @Nullable SonosResourceMetaData getResourceMetaData(String xml) throws SAXException {
         XMLReader reader = XMLReaderFactory.createXMLReader();
+        reader.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
         ResourceMetaDataHandler handler = new ResourceMetaDataHandler();
         reader.setContentHandler(handler);
         try {
@@ -370,7 +371,7 @@ public class SonosXMLParser {
                 int trackNumberVal = 0;
                 try {
                     trackNumberVal = Integer.parseInt(trackNumber.toString());
-                } catch (Exception e) {
+                } catch (NumberFormatException e) {
                 }
 
                 SonosResourceMetaData md = null;
@@ -868,6 +869,16 @@ public class SonosXMLParser {
                 case "Bass":
                 case "Treble":
                 case "OutputFixed":
+                case "NightMode":
+                case "DialogLevel":
+                case "SubEnabled":
+                case "SubGain":
+                case "SurroundEnabled":
+                case "SurroundMode":
+                case "SurroundLevel":
+                case "HTAudioIn":
+                case "MusicSurroundLevel":
+                case "HeightChannelLevel":
                     val = attributes == null ? null : attributes.getValue("val");
                     if (val != null) {
                         changes.put(qName, val);
@@ -1003,21 +1014,41 @@ public class SonosXMLParser {
     }
 
     /**
-     * The model name provided by upnp is formated like in the example form "Sonos PLAY:1" or "Sonos PLAYBAR"
+     * Build a valid thing type ID from the model name provided by UPnP
      *
-     * @param sonosModelName Sonos model name provided via upnp device
-     * @return the extracted players model name without column (:) character used for ThingType creation
+     * @param sonosModelName Sonos model name provided via UPnP device
+     * @return a valid thing type ID that can then be used for ThingType creation
      */
-    public static String extractModelName(String sonosModelName) {
-        String ret = sonosModelName;
-        Matcher matcher = Pattern.compile("\\s(.*)").matcher(ret);
+    public static String buildThingTypeIdFromModelName(String sonosModelName) {
+        // For Ikea SYMFONISK models, the model name now starts with "SYMFONISK" with recent firmwares
+        if (sonosModelName.toUpperCase().contains("SYMFONISK")) {
+            return "SYMFONISK";
+        }
+        String id = sonosModelName;
+        // Remove until the first space (in practice, it removes the leading "Sonos " from the model name)
+        Matcher matcher = Pattern.compile("\\s(.*)").matcher(id);
         if (matcher.find()) {
-            ret = matcher.group(1);
+            id = matcher.group(1);
+            // Remove a potential ending text surrounded with parenthesis
+            matcher = Pattern.compile("(.*)\\s\\(.*\\)").matcher(id);
+            if (matcher.find()) {
+                id = matcher.group(1);
+            }
         }
-        if (ret.contains(":")) {
-            ret = ret.replace(":", "");
+        // Finally remove unexpected characters in a thing type ID
+        id = id.replaceAll("[^a-zA-Z0-9_]", "");
+        // ZP80 is translated to CONNECT and ZP100 to CONNECTAMP
+        switch (id) {
+            case "ZP80":
+                id = "CONNECT";
+                break;
+            case "ZP100":
+                id = "CONNECTAMP";
+                break;
+            default:
+                break;
         }
-        return ret;
+        return id;
     }
 
     public static String compileMetadataString(SonosEntry entry) {

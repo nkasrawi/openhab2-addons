@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -10,7 +10,6 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-
 package org.openhab.binding.miio.internal.basic;
 
 import static java.nio.file.StandardWatchEventKinds.*;
@@ -82,7 +81,7 @@ public class MiIoDatabaseWatchService extends AbstractWatchService {
     }
 
     @Override
-    protected Kind<?>[] getWatchEventKinds(@Nullable Path directory) {
+    protected Kind<?> @Nullable [] getWatchEventKinds(@Nullable Path directory) {
         return new Kind<?>[] { ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY };
     }
 
@@ -115,6 +114,9 @@ public class MiIoDatabaseWatchService extends AbstractWatchService {
             try {
                 JsonObject deviceMapping = Utils.convertFileToJSON(db);
                 MiIoBasicDevice devdb = GSON.fromJson(deviceMapping, MiIoBasicDevice.class);
+                if (devdb == null) {
+                    continue;
+                }
                 for (String id : devdb.getDevice().getId()) {
                     workingDatabaseList.put(id, db);
                 }

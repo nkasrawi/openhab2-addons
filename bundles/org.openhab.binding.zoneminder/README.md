@@ -48,7 +48,7 @@ The following configuration parameters are available on the Server thing:
 | Host                           | host                        | Required  | Host name or IP address of the ZoneMinder server. |
 | Use secure connection          | useSSL                      | Required  | Use http or https for connection to ZoneMinder. Default is http. |
 | Port Number                    | portNumber                  | Optional  | Port number if not on ZoneMinder default port 80. |
-| Url Path                       | urlPath                     | Required  | Path where Zoneminder is installed. Default is /zm. |
+| Url Path                       | urlPath                     | Required  | Path where Zoneminder is installed. Default is /zm. Enter / if Zoneminder is installed under root directory. |
 | Refresh Interval               | refreshInterval             | Required  | Frequency in seconds at which monitor status will be updated. |
 | Default Alarm Duration         | defaultAlarmDuration        | Required  | Can be used to set the default alarm duration on discovered monitors. |
 | Default Image Refresh Interval | defaultImageRefreshInterval | Optional  | Can be used to set the image refresh interval in seconds on discovered monitors. Leave empty to not set an image refresh interval. |
@@ -98,15 +98,15 @@ The following configuration parameters are available on the Monitor thing:
 | totalEvents       | Number      | Total number of events  |
 | imageUrl          | String      | URL for image snapshot  |
 | videoUrl          | String      | URL for JPEG video stream  |
-| eventId           | String      | Event ID  |
-| eventName         | String      | Event name  |
-| eventCause        | String      | Event cause  |
-| eventNotes        | String      | Event notes  |
-| eventStart        | DateTime    | Event start date/time |
-| eventEnd          | DateTime    | Event end date/time  |
-| eventFrames       | Number      | Event frames  |
-| eventAlarmFrames  | Number      | Event alarm frames |
-| eventLength       | Number:Time | Event length in seconds  |
+| eventId           | String      | ID of most recently completed event  |
+| eventName         | String      | Name of most recently completed event |
+| eventCause        | String      | Cause of most recently completed event |
+| eventNotes        | String      | Notes of most recently completed event |
+| eventStart        | DateTime    | Start date/time of most recently completed event |
+| eventEnd          | DateTime    | End date/time of most recently completed event |
+| eventFrames       | Number      | Number of frames of most recently completed event |
+| eventAlarmFrames  | Number      | Number of alarm frames of most recently completed event |
+| eventLength       | Number:Time | Length in seconds of most recently completed event |
 
 ## Thing Actions
 
@@ -136,14 +136,14 @@ in the Monitor thing configuration.
 void triggerAlarm()
 ```
 
-### triggerAlarmOff
+### cancelAlarm
 
-The `triggerAlarmOff` action cancels a running alarm.
+The `cancelAlarm` action cancels a running alarm.
 
-##### triggerAlarmOff - cancel an alarm
+##### cancelAlarm - cancel an alarm
 
 ```java
-void triggerAlarmOff()
+void cancelAlarm()
 ```
 
 ### Requirements
@@ -231,7 +231,7 @@ when
     Item MotionSensorAlarm changed to ON
 then
     val zmActions = getActions("zoneminder", "zoneminder:monitor:1")
-    zmActions.triggerAlarmOn(120)
+    zmActions.triggerAlarm(120)
 end
 ```
 
@@ -241,7 +241,7 @@ when
     Item MotionSensorAlarm changed to ON
 then
     val zmActions = getActions("zoneminder", "zoneminder:monitor:1")
-    zmActions.triggerAlarmOn()
+    zmActions.triggerAlarm()
 end
 ```
 
@@ -251,23 +251,22 @@ when
     Item MotionSensorAlarm changed to OFF
 then
     val zmActions = getActions("zoneminder", "zoneminder:monitor:1")
-    zmActions.triggerAlarmOff()
+    zmActions.cancelAlarm()
 end
 ```
 
 ```
-val int NUM_MONITORS = 6
-var int monitorId = 1
+val monitors = newArrayList("1", "3", "4", "6")
+var int index = 0
 
-rule "Rotate Through All Monitor Images Every 10 Seconds"
+rule "Rotate Through a List of Monitor Images Every 10 Seconds"
 when
     Time cron "0/10 * * ? * * *"
 then
-    var String id = String::format("%d", monitorId)
-    ZmServer_ImageMonitorId.sendCommand(id)
-    monitorId = monitorId + 1
-    if (monitorId > NUM_MONITORS) {
-        monitorId = 1
+    ZmServer_ImageMonitorId.sendCommand(monitors.get(index))
+    index = index + 1
+    if (index >= monitors.size) {
+        index = 0
     }
 end
 ```

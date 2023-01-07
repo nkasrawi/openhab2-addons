@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2010-2020 Contributors to the openHAB project
+ * Copyright (c) 2010-2022 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,7 +19,6 @@ import static org.hamcrest.core.IsInstanceOf.instanceOf;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
-import static org.mockito.MockitoAnnotations.openMocks;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,8 +35,12 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.openhab.binding.modbus.internal.ModbusHandlerFactory;
 import org.openhab.core.events.Event;
 import org.openhab.core.events.EventFilter;
@@ -57,9 +60,12 @@ import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingProvider;
 import org.openhab.core.thing.binding.ThingHandler;
 import org.openhab.core.thing.binding.ThingHandlerFactory;
+import org.openhab.core.thing.link.AbstractLink;
 import org.openhab.core.thing.link.ItemChannelLink;
 import org.openhab.core.thing.link.ItemChannelLinkProvider;
+import org.openhab.core.thing.link.ItemChannelLinkRegistry;
 import org.openhab.core.thing.link.ManagedItemChannelLinkProvider;
+import org.openhab.core.thing.type.ChannelTypeUID;
 import org.openhab.core.transform.TransformationService;
 import org.openhab.core.types.State;
 import org.slf4j.Logger;
@@ -68,8 +74,18 @@ import org.slf4j.LoggerFactory;
 /**
  * @author Sami Salonen - Initial contribution
  */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @NonNullByDefault
 public abstract class AbstractModbusOSGiTest extends JavaOSGiTest {
+
+    /**
+     * When Mockito is used for mocking {@link ThingHandler}s it has to be able to load the {@link ChannelTypeUID}
+     * class. Bnd will add the package to the generated manifest when the class is referenced here.
+     */
+    static void mockitoPackageImport() {
+        ChannelTypeUID.class.getClass();
+    }
 
     private static class StateSubscriber implements EventSubscriber {
 
@@ -94,23 +110,22 @@ public abstract class AbstractModbusOSGiTest extends JavaOSGiTest {
             ItemStateEvent stateEvent = (ItemStateEvent) event;
             logger.trace("Captured event: {} of type {}. Payload: {}", event,
                     stateEvent.getItemState().getClass().getSimpleName(), event.getPayload());
-            stateUpdates.computeIfAbsent(stateEvent.getItemName(), (item) -> new ArrayList<>())
+            stateUpdates.computeIfAbsent(stateEvent.getItemName(), item -> new ArrayList<>())
                     .add(stateEvent.getItemState());
         }
     }
 
     private final Logger logger = LoggerFactory.getLogger(AbstractModbusOSGiTest.class);
 
-    private @NonNullByDefault({}) AutoCloseable mocksCloseable;
-
     protected @Mock @NonNullByDefault({}) ModbusManager mockedModbusManager;
+    protected @NonNullByDefault({}) ModbusManager realModbusManager;
     protected @NonNullByDefault({}) ManagedThingProvider thingProvider;
     protected @NonNullByDefault({}) ManagedItemProvider itemProvider;
     protected @NonNullByDefault({}) ManagedItemChannelLinkProvider itemChannelLinkProvider;
     protected @NonNullByDefault({}) ItemRegistry itemRegistry;
+    protected @NonNullByDefault({}) ItemChannelLinkRegistry itemChannelLinkRegistry;
     protected @NonNullByDefault({}) CoreItemFactory coreItemFactory;
 
-    private @NonNullByDefault({}) ModbusManager realModbusManager;
     private Set<Item> addedItems = new HashSet<>();
     private Set<Thing> addedThings = new HashSet<>();
     private Set<ItemChannelLink> addedLinks = new HashSet<>();
@@ -118,17 +133,12 @@ public abstract class AbstractModbusOSGiTest extends JavaOSGiTest {
 
     protected @Mock @NonNullByDefault({}) ModbusCommunicationInterface comms;
 
-    public AbstractModbusOSGiTest() {
-        super();
-    }
-
     /**
      * Before each test, configure mocked services
      */
     @BeforeEach
     public void setUpAbstractModbusOSGiTest() {
         logger.debug("setUpAbstractModbusOSGiTest BEGIN");
-        mocksCloseable = openMocks(this);
         registerVolatileStorageService();
         registerService(mockedModbusManager);
         registerService(stateSubscriber);
@@ -143,6 +153,8 @@ public abstract class AbstractModbusOSGiTest extends JavaOSGiTest {
         assertThat("Could not get ManagedItemChannelLinkProvider", itemChannelLinkProvider, is(notNullValue()));
         itemRegistry = getService(ItemRegistry.class);
         assertThat("Could not get ItemRegistry", itemRegistry, is(notNullValue()));
+        itemChannelLinkRegistry = getService(ItemChannelLinkRegistry.class);
+        assertThat("Could not get ItemChannelLinkRegistry", itemChannelLinkRegistry, is(notNullValue()));
 
         coreItemFactory = new CoreItemFactory();
 
@@ -167,7 +179,6 @@ public abstract class AbstractModbusOSGiTest extends JavaOSGiTest {
             logger.debug("Unlinking {} <-> {}", link.getItemName(), link.getLinkedUID());
             assertNotNull(itemChannelLinkProvider.remove(link.getUID()));
         }
-        mocksCloseable.close();
         logger.debug("tearDownAbstractModbusOSGiTest END");
     }
 
@@ -208,6 +219,8 @@ public abstract class AbstractModbusOSGiTest extends JavaOSGiTest {
         ItemChannelLink link = new ItemChannelLink(itemName, channelUID);
         assertThat(addedLinks.contains(link), not(equalTo(true)));
         itemChannelLinkProvider.add(link);
+        waitForAssert(() -> assertThat(itemChannelLinkRegistry.get(AbstractLink.getIDFor(itemName, channelUID)),
+                is(notNullValue())));
         addedLinks.add(link);
     }
 
